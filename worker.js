@@ -1,7 +1,12 @@
 // TFAM Management System — Cloudflare Worker API
 // Backs the index.html frontend via the TMS_DB D1 database (see schema.sql).
 
-const JSON_FIELDS = ['assigned', 'docs', 'activity'];
+// assigned = legacy catch-all list, kept for backward compatibility with
+// jobs created before the 4-category assignment split.
+const JSON_FIELDS = [
+  'assigned', 'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'docs', 'activity',
+];
+const JOB_ARRAY_FIELDS = ['assigned', 'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'docs'];
 
 // Plain free-text job fields — settable both at creation and via PATCH.
 const JOB_TEXT_FIELDS = [
@@ -13,7 +18,8 @@ const JOB_TEXT_FIELDS = [
 
 const UPDATABLE_FIELDS = [
   'title', ...JOB_TEXT_FIELDS, 'survey_date',
-  'appointment_date', 'appointment_confirmed', 'stage', 'assigned',
+  'appointment_date', 'appointment_confirmed', 'stage',
+  'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids',
   'notes', 'docs',
 ];
 
@@ -115,7 +121,11 @@ async function createJob(db, body) {
     appointment_date: '',
     appointment_confirmed: 0,
     stage: 'new_claim',
-    assigned: JSON.stringify(Array.isArray(body.assigned) ? body.assigned : []),
+    assigned: JSON.stringify([]),
+    director_ids: JSON.stringify(Array.isArray(body.director_ids) ? body.director_ids : []),
+    surveyor_ids: JSON.stringify(Array.isArray(body.surveyor_ids) ? body.surveyor_ids : []),
+    branch_ids: JSON.stringify(Array.isArray(body.branch_ids) ? body.branch_ids : []),
+    backstaff_ids: JSON.stringify(Array.isArray(body.backstaff_ids) ? body.backstaff_ids : []),
     notes: '',
     docs: JSON.stringify({}),
     activity: JSON.stringify(activity),
@@ -142,7 +152,7 @@ async function updateJob(db, id, body) {
   for (const field of UPDATABLE_FIELDS) {
     if (body[field] === undefined) continue;
     let value = body[field];
-    if (field === 'assigned' || field === 'docs') value = JSON.stringify(value);
+    if (JOB_ARRAY_FIELDS.includes(field)) value = JSON.stringify(value);
     if (field === 'appointment_confirmed') value = value ? 1 : 0;
     sets.push(`${field} = ?`);
     values.push(value);
@@ -434,6 +444,59 @@ async function deleteInsurer(db, id) {
   await db.prepare('DELETE FROM insurers WHERE id = ?').bind(id).run();
 }
 
+// ── TFAM BRANCHES ────────────────────────────────────────────
+async function listBranches(db) {
+  const { results } = await db.prepare('SELECT * FROM branches ORDER BY name ASC').all();
+  return results;
+}
+
+async function createBranch(db, body) {
+  if (!body || !body.name || !body.name.trim()) throw new Error('name is required');
+
+  const name = body.name.trim();
+  const existing = await db.prepare('SELECT * FROM branches WHERE name = ? COLLATE NOCASE').bind(name).first();
+  if (existing) return existing;
+
+  const id = await uniqueId(db, 'branches', slugify(name));
+  const now = Date.now();
+  const { count } = await db.prepare('SELECT COUNT(*) as count FROM branches').first();
+  const branch = { id, name, color: body.color || STAFF_COLORS[count % STAFF_COLORS.length], created_at: now };
+
+  await db.prepare('INSERT INTO branches (id, name, color, created_at) VALUES (?,?,?,?)')
+    .bind(branch.id, branch.name, branch.color, branch.created_at).run();
+
+  return branch;
+}
+
+const BRANCH_UPDATABLE_FIELDS = ['name', 'color'];
+
+async function updateBranch(db, id, body) {
+  const existing = await db.prepare('SELECT * FROM branches WHERE id = ?').bind(id).first();
+  if (!existing) throw new Error('branch not found');
+
+  const sets = [];
+  const values = [];
+  for (const field of BRANCH_UPDATABLE_FIELDS) {
+    if (body[field] === undefined) continue;
+    const value = String(body[field]).trim();
+    if (field === 'name' && !value) throw new Error('name is required');
+    sets.push(`${field} = ?`);
+    values.push(value);
+  }
+  if (sets.length === 0) return existing;
+
+  values.push(id);
+  await db.prepare(`UPDATE branches SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
+
+  return db.prepare('SELECT * FROM branches WHERE id = ?').bind(id).first();
+}
+
+async function deleteBranch(db, id) {
+  const existing = await db.prepare('SELECT 1 FROM branches WHERE id = ?').bind(id).first();
+  if (!existing) throw new Error('branch not found');
+  await db.prepare('DELETE FROM branches WHERE id = ?').bind(id).run();
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -537,6 +600,30 @@ export default {
       if (pathname.startsWith('/api/insurers/') && request.method === 'DELETE') {
         const id = decodeURIComponent(pathname.slice('/api/insurers/'.length));
         await deleteInsurer(db, id);
+        return json({ ok: true });
+      }
+
+      if (pathname === '/api/branches' && request.method === 'GET') {
+        return json(await listBranches(db));
+      }
+
+      if (pathname === '/api/branches' && request.method === 'POST') {
+        if (!isAdmin(user)) return error('Admin access required', 403);
+        const body = await request.json();
+        return json(await createBranch(db, body), 201);
+      }
+
+      if (pathname.startsWith('/api/branches/') && request.method === 'PATCH') {
+        if (!isAdmin(user)) return error('Admin access required', 403);
+        const id = decodeURIComponent(pathname.slice('/api/branches/'.length));
+        const body = await request.json();
+        return json(await updateBranch(db, id, body));
+      }
+
+      if (pathname.startsWith('/api/branches/') && request.method === 'DELETE') {
+        if (!isAdmin(user)) return error('Admin access required', 403);
+        const id = decodeURIComponent(pathname.slice('/api/branches/'.length));
+        await deleteBranch(db, id);
         return json({ ok: true });
       }
 

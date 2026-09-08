@@ -266,11 +266,14 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
     <div class="log-toolbar">
       <button class="btn-new" id="addStaffBtn" onclick="openNewStaff()" hidden>+ Add Staff</button>
       <button class="btn-new" onclick="openNewInsurer()">+ Add Insurer</button>
+      <button class="btn-new" id="addBranchBtn" onclick="openNewBranch()" hidden>+ Add Branch</button>
       <button class="btn-secondary" onclick="openChangePassword()">Change My Password</button>
     </div>
     <div class="staff-grid" id="staffGrid"></div>
     <div class="sp-section-label" style="margin-top:24px">Insurance Companies</div>
     <div class="assigned-grid" id="insurerGrid"></div>
+    <div class="sp-section-label" style="margin-top:24px">TFAM Branches</div>
+    <div class="assigned-grid" id="branchGrid"></div>
   </div>
 </div>
 
@@ -406,8 +409,20 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <input id="nj-doi" type="date">
         </div>
         <div class="form-field full">
-          <label>Assign To</label>
-          <div class="assigned-grid" id="nj-assign"></div>
+          <label>Director Responsible</label>
+          <div class="assigned-grid" id="nj-assign-director"></div>
+        </div>
+        <div class="form-field full">
+          <label>Surveyor Who Is Signing</label>
+          <div class="assigned-grid" id="nj-assign-surveyor"></div>
+        </div>
+        <div class="form-field full">
+          <label>TFAM Branch Handling</label>
+          <div class="assigned-grid" id="nj-assign-branch"></div>
+        </div>
+        <div class="form-field full">
+          <label>Backstaff/Surveyor Responsible</label>
+          <div class="assigned-grid" id="nj-assign-backstaff"></div>
         </div>
       </div>
     </div>
@@ -497,6 +512,33 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
   </div>
 </div>
 
+<!-- ── NEW/EDIT BRANCH MODAL (admin only) ── -->
+<div class="modal-overlay" id="newBranchModal" hidden onclick="e=>e.target===this&&closeNewBranch()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="nb-modal-title">Add TFAM Branch</h2>
+      <button class="sp-close" onclick="closeNewBranch()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Branch Name *</label>
+          <input id="nb-name" placeholder="e.g. Chennai" required>
+        </div>
+        <div class="form-field">
+          <label>Color</label>
+          <input id="nb-color" type="color" value="#6B7AFF">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitNewBranch()" id="nb-submit-btn">Add Branch</button>
+      <button class="btn-secondary" onclick="closeNewBranch()">Cancel</button>
+      <button class="btn-secondary" onclick="deleteBranchEntry()" id="nb-delete-btn" hidden style="color:#EF4444;margin-left:auto">Delete</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── CHANGE PASSWORD MODAL ── -->
 <div class="modal-overlay" id="changePasswordModal" hidden onclick="e=>e.target===this&&closeChangePassword()">
   <div class="modal">
@@ -576,6 +618,7 @@ const DOCS = [
 let jobs = [];
 let log  = [];
 let INSURERS = [];
+let BRANCHES = [];
 let currentUser = null;        // logged-in staff id
 let currentUserRecord = null;  // full staff record {id,name,role,access_role,...}
 let stageFilter = null;
@@ -651,6 +694,7 @@ function onLoggedIn() {
   const badge = isAdminUser() ? '<span class="role-badge">ADMIN</span>' : '';
   document.getElementById('topbarUser').innerHTML = `${esc(currentUserRecord.name)} ${badge}`;
   document.getElementById('addStaffBtn').hidden = !isAdminUser();
+  document.getElementById('addBranchBtn').hidden = !isAdminUser();
   buildNewJobAssign();
   buildLogFilters();
   fetchAll();
@@ -673,18 +717,20 @@ async function logout() {
 // ── API CALLS ─────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [jRes, lRes, sRes, iRes] = await Promise.all([
+    const [jRes, lRes, sRes, iRes, bRes] = await Promise.all([
       fetch(API + '/api/jobs'),
       fetch(API + '/api/log'),
       fetch(API + '/api/staff'),
       fetch(API + '/api/insurers'),
+      fetch(API + '/api/branches'),
     ]);
-    if ([jRes, lRes, sRes, iRes].some(r => r.status === 401)) { sessionExpired(); return; }
-    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok) throw new Error('bad response');
+    if ([jRes, lRes, sRes, iRes, bRes].some(r => r.status === 401)) { sessionExpired(); return; }
+    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok || !bRes.ok) throw new Error('bad response');
     jobs = await jRes.json();
     log  = await lRes.json();
     TEAM = await sRes.json();
     INSURERS = await iRes.json();
+    BRANCHES = await bRes.json();
     setOnline(true);
     buildLogFilters();
     buildInsurerList();
@@ -797,17 +843,29 @@ function renderKanban() {
   }).join('');
 }
 
+// Union of the legacy flat list and the 4 category lists, for display
+// purposes (job cards, staff "my jobs" counts) — covers both old jobs
+// (legacy `assigned` only) and new ones (category fields only).
+function jobStaffIds(j) {
+  return [...new Set([
+    ...(j.assigned || []), ...(j.director_ids || []), ...(j.surveyor_ids || []), ...(j.backstaff_ids || []),
+  ])];
+}
+
 function jobCard(j) {
-  const avatars = (j.assigned || [])
+  const avatars = jobStaffIds(j)
     .map(id => teamMember(id))
     .filter(Boolean)
     .map(m => `<div class="avatar" style="background:${m.color}" title="${m.name}">${m.initials}</div>`)
     .join('');
+  const branchNames = (j.branch_ids || [])
+    .map(id => branchMember(id)).filter(Boolean).map(b => esc(b.name)).join(', ');
   return `
   <div class="k-card" onclick="openJob('${j.id}')">
     <div class="k-card-id">${j.id}</div>
     <div class="k-card-title">${esc(j.title)}</div>
     ${j.insurer ? `<div class="k-card-meta">${esc(j.insurer)}</div>` : ''}
+    ${branchNames ? `<div class="k-card-meta">${branchNames}</div>` : ''}
     ${avatars ? `<div class="k-card-avatars">${avatars}</div>` : ''}
   </div>`;
 }
@@ -815,7 +873,7 @@ function jobCard(j) {
 // ── STAFF VIEW ────────────────────────────────────────────────
 function renderStaff() {
   document.getElementById('staffGrid').innerHTML = TEAM.map(m => {
-    const myJobs = jobs.filter(j => (j.assigned || []).includes(m.id));
+    const myJobs = jobs.filter(j => jobStaffIds(j).includes(m.id));
     const rows = myJobs.map(j => {
       const s = STAGES.find(s => s.id === j.stage) || STAGES[0];
       return `
@@ -851,6 +909,13 @@ function renderStaff() {
     : INSURERS.map(i => `
       <div class="assign-chip" style="cursor:pointer" onclick="openEditInsurer('${i.id}')" title="Click to edit">
         ${i.acronym ? `<strong>${esc(i.acronym)}</strong> —` : ''} ${esc(i.name)}
+      </div>`).join('');
+
+  document.getElementById('branchGrid').innerHTML = BRANCHES.length === 0
+    ? '<div style="font-size:11px;color:var(--text-faint);padding:4px 0">No branches added yet</div>'
+    : BRANCHES.map(b => `
+      <div class="assign-chip" ${isAdminUser() ? `style="cursor:pointer" onclick="openEditBranch('${b.id}')" title="Click to edit"` : ''}>
+        <span class="k-stage-dot" style="background:${b.color}"></span> ${esc(b.name)}
       </div>`).join('');
 }
 
@@ -941,13 +1006,10 @@ function buildJobPanel(j) {
       ${s.label}
     </button>`).join('');
 
-  const assignChips = TEAM.map(m => `
-    <div class="assign-chip ${(j.assigned||[]).includes(m.id) ? 'active' : ''}"
-         style="${(j.assigned||[]).includes(m.id) ? `background:${m.color};border-color:${m.color}` : ''}"
-         onclick="toggleAssign('${m.id}')" data-member="${m.id}">
-      <div class="av" style="background:${m.color}">${m.initials}</div>
-      ${m.name}
-    </div>`).join('');
+  const directorChips  = chipsHtml(TEAM, j.director_ids||[]);
+  const surveyorChips  = chipsHtml(TEAM, j.surveyor_ids||[]);
+  const branchChips    = chipsHtml(BRANCHES, j.branch_ids||[]);
+  const backstaffChips = chipsHtml(TEAM, j.backstaff_ids||[]);
 
   const docItems = DOCS.map(d => {
     const key = d.replace(/[^a-z0-9]/gi,'_').toLowerCase();
@@ -974,8 +1036,20 @@ function buildJobPanel(j) {
 
   <!-- Assign -->
   <div class="sp-section">
-    <div class="sp-section-label">Assigned To</div>
-    <div class="assigned-grid" id="sp-assign-grid">${assignChips}</div>
+    <div class="sp-section-label">Director Responsible</div>
+    <div class="assigned-grid" id="sp-assign-director">${directorChips}</div>
+  </div>
+  <div class="sp-section">
+    <div class="sp-section-label">Surveyor Who Is Signing</div>
+    <div class="assigned-grid" id="sp-assign-surveyor">${surveyorChips}</div>
+  </div>
+  <div class="sp-section">
+    <div class="sp-section-label">TFAM Branch Handling</div>
+    <div class="assigned-grid" id="sp-assign-branch">${branchChips}</div>
+  </div>
+  <div class="sp-section">
+    <div class="sp-section-label">Backstaff/Surveyor Responsible</div>
+    <div class="assigned-grid" id="sp-assign-backstaff">${backstaffChips}</div>
   </div>
 
   <!-- Job Details -->
@@ -1053,25 +1127,27 @@ function setPanelStage(id, label) {
   });
 }
 
-function toggleAssign(memberId) {
-  const j = jobs.find(j => j.id === openJobId);
-  if (!j) return;
-  let assigned = panelState.assigned !== undefined ? [...panelState.assigned] : [...(j.assigned||[])];
-  if (assigned.includes(memberId)) {
-    assigned = assigned.filter(id => id !== memberId);
-  } else {
-    assigned.push(memberId);
-  }
-  panelState.assigned = assigned;
-  const m = teamMember(memberId);
-  document.querySelectorAll('[data-member]').forEach(el => {
-    const mid = el.dataset.member;
-    const tm  = teamMember(mid);
-    const active = assigned.includes(mid);
-    el.classList.toggle('active', active);
-    el.style.background   = active ? tm.color : '';
-    el.style.borderColor  = active ? tm.color : '';
-  });
+// Generic chip toggle used by all 4 assignment categories (staff or
+// branch), in both the New Job modal and the job detail side panel.
+// Selection state lives entirely in the chip's own class/DOM — read
+// back at submit/save time via querySelectorAll('.active').
+function chipsHtml(options, selectedIds) {
+  selectedIds = selectedIds || [];
+  return options.map(o => `
+    <div class="assign-chip ${selectedIds.includes(o.id) ? 'active' : ''}"
+         style="${selectedIds.includes(o.id) ? `background:${o.color};border-color:${o.color};color:#fff` : ''}"
+         onclick="toggleChip(this)" data-id="${o.id}" data-color="${o.color}">
+      ${esc(o.name)}
+    </div>`).join('');
+}
+
+function toggleChip(el) {
+  el.classList.toggle('active');
+  const active = el.classList.contains('active');
+  const c = el.dataset.color || '#6B7AFF';
+  el.style.background  = active ? c : '';
+  el.style.borderColor = active ? c : '';
+  el.style.color       = active ? '#fff' : '';
 }
 
 function toggleDoc(key, label) {
@@ -1103,7 +1179,11 @@ async function saveJob() {
     updates.stage = stage;
   }
 
-  if (panelState.assigned !== undefined) updates.assigned = panelState.assigned;
+  const activeIds = containerId => [...document.querySelectorAll(`#${containerId} .active`)].map(el => el.dataset.id);
+  updates.director_ids  = activeIds('sp-assign-director');
+  updates.surveyor_ids  = activeIds('sp-assign-surveyor');
+  updates.branch_ids    = activeIds('sp-assign-branch');
+  updates.backstaff_ids = activeIds('sp-assign-backstaff');
   if (panelState.docs !== undefined) updates.docs = panelState.docs;
 
   const title  = document.getElementById('sp-f-title')?.value.trim();
@@ -1153,25 +1233,10 @@ async function saveJob() {
 
 // ── NEW JOB ───────────────────────────────────────────────────
 function buildNewJobAssign() {
-  document.getElementById('nj-assign').innerHTML = TEAM.map(m => `
-    <div class="assign-chip" style="" onclick="toggleNjAssign('${m.id}',this)" data-member="${m.id}">
-      <div class="av" style="background:${m.color}">${m.initials}</div>
-      ${m.name}
-    </div>`).join('');
-}
-
-function toggleNjAssign(id, el) {
-  el.classList.toggle('active');
-  const m = teamMember(id);
-  if (el.classList.contains('active')) {
-    el.style.background  = m.color;
-    el.style.borderColor = m.color;
-    el.style.color       = '#fff';
-  } else {
-    el.style.background  = '';
-    el.style.borderColor = '';
-    el.style.color       = '';
-  }
+  document.getElementById('nj-assign-director').innerHTML  = chipsHtml(TEAM);
+  document.getElementById('nj-assign-surveyor').innerHTML  = chipsHtml(TEAM);
+  document.getElementById('nj-assign-branch').innerHTML    = chipsHtml(BRANCHES);
+  document.getElementById('nj-assign-backstaff').innerHTML = chipsHtml(TEAM);
 }
 
 function openNewJob()  { document.getElementById('newJobModal').hidden = false; }
@@ -1195,13 +1260,15 @@ async function submitNewJob() {
   if (!title) { alert('Job title is required.'); return; }
   if (!apiReady) { alert('API not configured. Set the API URL in index.html first.'); return; }
 
-  const assigned = [...document.querySelectorAll('#nj-assign [data-member].active')]
-    .map(el => el.dataset.member);
+  const activeIds = containerId => [...document.querySelectorAll(`#${containerId} .active`)].map(el => el.dataset.id);
 
   const body = {
     title,
     id: document.getElementById('nj-id').value.trim() || undefined,
-    assigned,
+    director_ids: activeIds('nj-assign-director'),
+    surveyor_ids: activeIds('nj-assign-surveyor'),
+    branch_ids: activeIds('nj-assign-branch'),
+    backstaff_ids: activeIds('nj-assign-backstaff'),
     created_by: currentUser || 'unknown',
   };
   for (const [fieldId, key] of Object.entries(NJ_FIELD_MAP)) {
@@ -1217,10 +1284,7 @@ async function submitNewJob() {
     // Clear form
     ['nj-title', 'nj-id', ...Object.keys(NJ_FIELD_MAP)]
       .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-    document.querySelectorAll('#nj-assign .assign-chip').forEach(el => {
-      el.classList.remove('active');
-      el.style.background = el.style.borderColor = el.style.color = '';
-    });
+    buildNewJobAssign();
   } catch(e) {
     alert('Error creating job: ' + e.message);
   }
@@ -1403,6 +1467,73 @@ async function deleteInsurerEntry() {
   }
 }
 
+// ── NEW / EDIT BRANCH (admin only) ───────────────────────────
+let editingBranchId = null;
+
+function openNewBranch() {
+  if (!isAdminUser()) return;
+  editingBranchId = null;
+  document.getElementById('nb-modal-title').textContent = 'Add TFAM Branch';
+  document.getElementById('nb-submit-btn').textContent = 'Add Branch';
+  document.getElementById('nb-delete-btn').hidden = true;
+  document.getElementById('nb-name').value = '';
+  document.getElementById('nb-color').value = '#6B7AFF';
+  document.getElementById('newBranchModal').hidden = false;
+}
+
+function openEditBranch(id) {
+  const b = branchMember(id);
+  if (!b || !isAdminUser()) return;
+  editingBranchId = id;
+  document.getElementById('nb-modal-title').textContent = 'Edit TFAM Branch';
+  document.getElementById('nb-submit-btn').textContent = 'Save Changes';
+  document.getElementById('nb-delete-btn').hidden = false;
+  document.getElementById('nb-name').value = b.name;
+  document.getElementById('nb-color').value = b.color || '#6B7AFF';
+  document.getElementById('newBranchModal').hidden = false;
+}
+
+function closeNewBranch() { document.getElementById('newBranchModal').hidden = true; }
+
+async function submitNewBranch() {
+  const name = document.getElementById('nb-name').value.trim();
+  if (!name) { alert('Branch name is required.'); return; }
+  if (!apiReady) { alert('API not configured.'); return; }
+
+  const body = { name, color: document.getElementById('nb-color').value };
+
+  try {
+    if (editingBranchId) {
+      const updated = await apiPatch('/api/branches/' + encodeURIComponent(editingBranchId), body);
+      BRANCHES = BRANCHES.map(b => b.id === updated.id ? updated : b);
+    } else {
+      const branch = await apiPost('/api/branches', body);
+      BRANCHES = [...BRANCHES, branch];
+    }
+    closeNewBranch();
+    if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
+    renderAll();
+  } catch(e) {
+    alert('Error saving branch: ' + e.message);
+  }
+}
+
+async function deleteBranchEntry() {
+  if (!editingBranchId) return;
+  const b = branchMember(editingBranchId);
+  if (!confirm(`Remove ${b ? b.name : editingBranchId} from branches?`)) return;
+
+  try {
+    await apiDelete('/api/branches/' + encodeURIComponent(editingBranchId));
+    BRANCHES = BRANCHES.filter(b => b.id !== editingBranchId);
+    closeNewBranch();
+    if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
+    renderAll();
+  } catch(e) {
+    alert('Error removing branch: ' + e.message);
+  }
+}
+
 // ── VIEWS ─────────────────────────────────────────────────────
 function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
@@ -1411,6 +1542,7 @@ function switchView(name) {
 
 // ── HELPERS ───────────────────────────────────────────────────
 function teamMember(id) { return TEAM.find(m => m.id === id); }
+function branchMember(id) { return BRANCHES.find(b => b.id === id); }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 </script>
 </body>

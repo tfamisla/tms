@@ -35,7 +35,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   appointment_date     TEXT    DEFAULT '',
   appointment_confirmed INTEGER DEFAULT 0,
   stage                TEXT    NOT NULL DEFAULT 'new_claim',
-  assigned             TEXT    NOT NULL DEFAULT '[]',   -- JSON array of member IDs
+  assigned             TEXT    NOT NULL DEFAULT '[]',   -- legacy JSON array of staff IDs
+  director_ids         TEXT    NOT NULL DEFAULT '[]',   -- JSON array of staff IDs (Director Responsible)
+  surveyor_ids         TEXT    NOT NULL DEFAULT '[]',   -- JSON array of staff IDs (Surveyor Signing)
+  branch_ids           TEXT    NOT NULL DEFAULT '[]',   -- JSON array of branch IDs (TFAM Branch Handling)
+  backstaff_ids        TEXT    NOT NULL DEFAULT '[]',   -- JSON array of staff IDs (Backstaff/Surveyor Responsible)
   notes                TEXT    DEFAULT '',
   docs                 TEXT    NOT NULL DEFAULT '{}',   -- JSON object of doc flags
   activity             TEXT    NOT NULL DEFAULT '[]',   -- JSON array of {text,ts,actor}
@@ -78,6 +82,14 @@ CREATE TABLE IF NOT EXISTS insurers (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL UNIQUE,
   acronym    TEXT DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+
+-- ── TFAM Branches ────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS branches (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL UNIQUE,
+  color      TEXT NOT NULL DEFAULT '#6B7AFF',
   created_at INTEGER NOT NULL
 );
 
