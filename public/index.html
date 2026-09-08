@@ -330,8 +330,32 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <input id="nj-insured" placeholder="e.g. M/s Kalyani Textiles">
         </div>
         <div class="form-field">
+          <label>Contact Person</label>
+          <input id="nj-contact-person" placeholder="e.g. Ramesh Kumar">
+        </div>
+        <div class="form-field">
+          <label>Contact Phone</label>
+          <input id="nj-contact-phone" placeholder="e.g. 98765 43210">
+        </div>
+        <div class="form-field full">
+          <label>Address</label>
+          <input id="nj-address" placeholder="Site / insured address">
+        </div>
+        <div class="form-field">
+          <label>District / City</label>
+          <input id="nj-district">
+        </div>
+        <div class="form-field">
           <label>Policy No.</label>
           <input id="nj-policy">
+        </div>
+        <div class="form-field">
+          <label>Policy Name</label>
+          <input id="nj-policy-name">
+        </div>
+        <div class="form-field">
+          <label>Policy Period</label>
+          <input id="nj-policy-period" placeholder="e.g. 01-04-2025 to 31-03-2026">
         </div>
         <div class="form-field">
           <label>Claim No.</label>
@@ -344,6 +368,34 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
         <div class="form-field">
           <label>Approx. Claim Amount (₹)</label>
           <input id="nj-amount" placeholder="e.g. 45,00,000">
+        </div>
+        <div class="form-field">
+          <label>Estimated Loss (₹)</label>
+          <input id="nj-estimated-loss">
+        </div>
+        <div class="form-field">
+          <label>Gross Loss (₹)</label>
+          <input id="nj-gross-loss">
+        </div>
+        <div class="form-field">
+          <label>Department</label>
+          <input id="nj-department" list="departmentList" placeholder="e.g. Fire">
+          <datalist id="departmentList">
+            <option value="Fire"></option>
+            <option value="Marine"></option>
+            <option value="Engineering"></option>
+            <option value="Motor"></option>
+            <option value="Health"></option>
+            <option value="Miscellaneous"></option>
+          </datalist>
+        </div>
+        <div class="form-field">
+          <label>Appointing Office (State &amp; Address)</label>
+          <input id="nj-appointing-office">
+        </div>
+        <div class="form-field">
+          <label>Appointing Person</label>
+          <input id="nj-appointing-person">
         </div>
         <div class="form-field">
           <label>Date of Loss</label>
@@ -936,10 +988,21 @@ function buildJobPanel(j) {
       </div>
       <div class="sp-field"><label>Insurer</label><input id="sp-f-insurer" list="insurerList" value="${esc(j.insurer||'')}"></div>
       <div class="sp-field"><label>Insured</label><input id="sp-f-insured" value="${esc(j.insured||'')}"></div>
+      <div class="sp-field"><label>Contact Person</label><input id="sp-f-contact-person" value="${esc(j.contact_person||'')}"></div>
+      <div class="sp-field"><label>Contact Phone</label><input id="sp-f-contact-phone" value="${esc(j.contact_phone||'')}"></div>
+      <div class="sp-field sp-field-full"><label>Address</label><input id="sp-f-address" value="${esc(j.address||'')}"></div>
+      <div class="sp-field"><label>District / City</label><input id="sp-f-district" value="${esc(j.district||'')}"></div>
       <div class="sp-field"><label>Policy No.</label><input id="sp-f-policy" value="${esc(j.policy_no||'')}"></div>
+      <div class="sp-field"><label>Policy Name</label><input id="sp-f-policy-name" value="${esc(j.policy_name||'')}"></div>
+      <div class="sp-field"><label>Policy Period</label><input id="sp-f-policy-period" value="${esc(j.policy_period||'')}"></div>
       <div class="sp-field"><label>Claim No.</label><input id="sp-f-claim" value="${esc(j.claim_no||'')}"></div>
       <div class="sp-field"><label>Peril</label><input id="sp-f-peril" value="${esc(j.peril||'')}"></div>
       <div class="sp-field"><label>Claim Amount (₹)</label><input id="sp-f-amount" value="${esc(j.claim_amount||'')}"></div>
+      <div class="sp-field"><label>Estimated Loss (₹)</label><input id="sp-f-estimated-loss" value="${esc(j.estimated_loss||'')}"></div>
+      <div class="sp-field"><label>Gross Loss (₹)</label><input id="sp-f-gross-loss" value="${esc(j.gross_loss||'')}"></div>
+      <div class="sp-field"><label>Department</label><input id="sp-f-department" list="departmentList" value="${esc(j.department||'')}"></div>
+      <div class="sp-field"><label>Appointing Office</label><input id="sp-f-appointing-office" value="${esc(j.appointing_office||'')}"></div>
+      <div class="sp-field"><label>Appointing Person</label><input id="sp-f-appointing-person" value="${esc(j.appointing_person||'')}"></div>
       <div class="sp-field"><label>Date of Loss</label><input type="date" id="sp-f-dol" value="${j.date_loss||''}"></div>
       <div class="sp-field"><label>Date of Intimation</label><input type="date" id="sp-f-doi" value="${j.date_intimation||''}"></div>
       <div class="sp-field"><label>Survey Date</label><input type="date" id="sp-f-survey" value="${j.survey_date||''}"></div>
@@ -1051,10 +1114,21 @@ async function saveJob() {
 
   updates.insurer       = document.getElementById('sp-f-insurer')?.value;
   updates.insured       = document.getElementById('sp-f-insured')?.value;
+  updates.contact_person = document.getElementById('sp-f-contact-person')?.value;
+  updates.contact_phone = document.getElementById('sp-f-contact-phone')?.value;
+  updates.address       = document.getElementById('sp-f-address')?.value;
+  updates.district      = document.getElementById('sp-f-district')?.value;
   updates.policy_no     = document.getElementById('sp-f-policy')?.value;
+  updates.policy_name   = document.getElementById('sp-f-policy-name')?.value;
+  updates.policy_period = document.getElementById('sp-f-policy-period')?.value;
   updates.claim_no      = document.getElementById('sp-f-claim')?.value;
   updates.peril         = document.getElementById('sp-f-peril')?.value;
   updates.claim_amount  = document.getElementById('sp-f-amount')?.value;
+  updates.estimated_loss = document.getElementById('sp-f-estimated-loss')?.value;
+  updates.gross_loss    = document.getElementById('sp-f-gross-loss')?.value;
+  updates.department    = document.getElementById('sp-f-department')?.value;
+  updates.appointing_office = document.getElementById('sp-f-appointing-office')?.value;
+  updates.appointing_person = document.getElementById('sp-f-appointing-person')?.value;
   updates.date_loss     = document.getElementById('sp-f-dol')?.value;
   updates.date_intimation = document.getElementById('sp-f-doi')?.value;
   updates.survey_date   = document.getElementById('sp-f-survey')?.value;
@@ -1103,6 +1177,19 @@ function toggleNjAssign(id, el) {
 function openNewJob()  { document.getElementById('newJobModal').hidden = false; }
 function closeNewJob() { document.getElementById('newJobModal').hidden = true; }
 
+// Maps New Job form field ids to the job body key they populate.
+const NJ_FIELD_MAP = {
+  'nj-insurer': 'insurer', 'nj-insured': 'insured',
+  'nj-contact-person': 'contact_person', 'nj-contact-phone': 'contact_phone',
+  'nj-address': 'address', 'nj-district': 'district',
+  'nj-policy': 'policy_no', 'nj-policy-name': 'policy_name', 'nj-policy-period': 'policy_period',
+  'nj-claim': 'claim_no', 'nj-peril': 'peril', 'nj-amount': 'claim_amount',
+  'nj-estimated-loss': 'estimated_loss', 'nj-gross-loss': 'gross_loss',
+  'nj-department': 'department', 'nj-appointing-office': 'appointing_office',
+  'nj-appointing-person': 'appointing_person',
+  'nj-dol': 'date_loss', 'nj-doi': 'date_intimation',
+};
+
 async function submitNewJob() {
   const title = document.getElementById('nj-title').value.trim();
   if (!title) { alert('Job title is required.'); return; }
@@ -1113,18 +1200,13 @@ async function submitNewJob() {
 
   const body = {
     title,
-    id:              document.getElementById('nj-id').value.trim() || undefined,
-    insurer:         document.getElementById('nj-insurer').value,
-    insured:         document.getElementById('nj-insured').value,
-    policy_no:       document.getElementById('nj-policy').value,
-    claim_no:        document.getElementById('nj-claim').value,
-    peril:           document.getElementById('nj-peril').value,
-    claim_amount:    document.getElementById('nj-amount').value,
-    date_loss:       document.getElementById('nj-dol').value,
-    date_intimation: document.getElementById('nj-doi').value,
+    id: document.getElementById('nj-id').value.trim() || undefined,
     assigned,
     created_by: currentUser || 'unknown',
   };
+  for (const [fieldId, key] of Object.entries(NJ_FIELD_MAP)) {
+    body[key] = document.getElementById(fieldId).value;
+  }
 
   try {
     const newJob = await apiPost('/api/jobs', body);
@@ -1133,7 +1215,7 @@ async function submitNewJob() {
     closeNewJob();
     renderAll();
     // Clear form
-    ['nj-title','nj-id','nj-insurer','nj-insured','nj-policy','nj-claim','nj-peril','nj-amount','nj-dol','nj-doi']
+    ['nj-title', 'nj-id', ...Object.keys(NJ_FIELD_MAP)]
       .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
     document.querySelectorAll('#nj-assign .assign-chip').forEach(el => {
       el.classList.remove('active');

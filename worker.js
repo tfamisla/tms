@@ -3,9 +3,16 @@
 
 const JSON_FIELDS = ['assigned', 'docs', 'activity'];
 
+// Plain free-text job fields — settable both at creation and via PATCH.
+const JOB_TEXT_FIELDS = [
+  'insurer', 'insured', 'policy_no', 'policy_name', 'policy_period', 'claim_no', 'peril',
+  'claim_amount', 'estimated_loss', 'gross_loss', 'department', 'appointing_office',
+  'appointing_person', 'contact_person', 'contact_phone', 'address', 'district',
+  'date_loss', 'date_intimation',
+];
+
 const UPDATABLE_FIELDS = [
-  'title', 'insurer', 'insured', 'policy_no', 'claim_no', 'peril',
-  'claim_amount', 'date_loss', 'date_intimation', 'survey_date',
+  'title', ...JOB_TEXT_FIELDS, 'survey_date',
   'appointment_date', 'appointment_confirmed', 'stage', 'assigned',
   'notes', 'docs',
 ];
@@ -104,14 +111,6 @@ async function createJob(db, body) {
   const job = {
     id,
     title: body.title.trim(),
-    insurer: body.insurer || '',
-    insured: body.insured || '',
-    policy_no: body.policy_no || '',
-    claim_no: body.claim_no || '',
-    peril: body.peril || '',
-    claim_amount: body.claim_amount || '',
-    date_loss: body.date_loss || '',
-    date_intimation: body.date_intimation || '',
     survey_date: '',
     appointment_date: '',
     appointment_confirmed: 0,
@@ -123,18 +122,12 @@ async function createJob(db, body) {
     created_at: now,
     updated_at: now,
   };
+  for (const f of JOB_TEXT_FIELDS) job[f] = body[f] || '';
 
-  await db.prepare(`
-    INSERT INTO jobs (id, title, insurer, insured, policy_no, claim_no, peril,
-      claim_amount, date_loss, date_intimation, survey_date, appointment_date,
-      appointment_confirmed, stage, assigned, notes, docs, activity, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).bind(
-    job.id, job.title, job.insurer, job.insured, job.policy_no, job.claim_no, job.peril,
-    job.claim_amount, job.date_loss, job.date_intimation, job.survey_date, job.appointment_date,
-    job.appointment_confirmed, job.stage, job.assigned, job.notes, job.docs, job.activity,
-    job.created_at, job.updated_at
-  ).run();
+  const columns = Object.keys(job);
+  await db.prepare(
+    `INSERT INTO jobs (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(',')})`
+  ).bind(...columns.map(c => job[c])).run();
 
   return rowToJob(job);
 }
