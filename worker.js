@@ -22,7 +22,7 @@ const JOB_TEXT_FIELDS = [
   'insured', 'address', 'district', 'insured_state', 'insured_pincode',
   'deputation_mode',
   'policy_no', 'policy_name', 'policy_period_from', 'policy_period_to', 'claim_no', 'peril',
-  'claim_amount', 'estimated_loss', 'gross_loss', 'department',
+  'item_type', 'claim_amount', 'estimated_loss', 'gross_loss', 'department',
   'date_loss', 'date_intimation',
 ];
 
@@ -110,6 +110,13 @@ async function validateJobAssignments(db, body) {
   if (body.branch_ids !== undefined) await validateIdsExist(db, 'branches', body.branch_ids, 'branch id');
 }
 
+// ISO YYYY-MM-DD strings compare correctly lexicographically.
+function validatePolicyPeriod(from, to) {
+  if (from && to && to < from) {
+    throw new Error('Policy Period Expiry cannot be earlier than Policy Period From');
+  }
+}
+
 async function listJobs(db) {
   const { results } = await db.prepare('SELECT * FROM jobs ORDER BY updated_at DESC').all();
   return results.map(rowToJob);
@@ -129,6 +136,7 @@ async function listLog(db) {
 
 async function createJob(db, body) {
   if (!body || !body.title || !body.title.trim()) throw new Error('title is required');
+  validatePolicyPeriod(body.policy_period_from, body.policy_period_to);
   await validateJobAssignments(db, body);
 
   let id;
@@ -176,6 +184,9 @@ async function createJob(db, body) {
 async function updateJob(db, id, body) {
   const existing = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
   if (!existing) throw new Error('job not found');
+  const effectiveFrom = body.policy_period_from !== undefined ? body.policy_period_from : existing.policy_period_from;
+  const effectiveTo   = body.policy_period_to   !== undefined ? body.policy_period_to   : existing.policy_period_to;
+  validatePolicyPeriod(effectiveFrom, effectiveTo);
   await validateJobAssignments(db, body);
 
   const sets = [];

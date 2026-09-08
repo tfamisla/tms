@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   policy_period_from   TEXT    DEFAULT '',   -- date, e.g. "2025-04-01"
   policy_period_to     TEXT    DEFAULT '',   -- date, e.g. "2026-03-31"
   peril                TEXT    DEFAULT '',
+  item_type            TEXT    DEFAULT '',   -- Type of Item/Property Involved
   estimated_loss       TEXT    DEFAULT '',
   claim_amount         TEXT    DEFAULT '',
   gross_loss           TEXT    DEFAULT '',
