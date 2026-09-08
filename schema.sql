@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   insured              TEXT    DEFAULT '',
   policy_no            TEXT    DEFAULT '',
   policy_name          TEXT    DEFAULT '',
-  policy_period        TEXT    DEFAULT '',
+  policy_period_from   TEXT    DEFAULT '',   -- date, e.g. "2025-04-01"
+  policy_period_to     TEXT    DEFAULT '',   -- date, e.g. "2026-03-31"
   claim_no             TEXT    DEFAULT '',
   peril                TEXT    DEFAULT '',
   claim_amount         TEXT    DEFAULT '',

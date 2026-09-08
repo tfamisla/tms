@@ -10,7 +10,7 @@ const JOB_ARRAY_FIELDS = ['assigned', 'director_ids', 'surveyor_ids', 'branch_id
 
 // Plain free-text job fields — settable both at creation and via PATCH.
 const JOB_TEXT_FIELDS = [
-  'insurer', 'insured', 'policy_no', 'policy_name', 'policy_period', 'claim_no', 'peril',
+  'insurer', 'insured', 'policy_no', 'policy_name', 'policy_period_from', 'policy_period_to', 'claim_no', 'peril',
   'claim_amount', 'estimated_loss', 'gross_loss', 'department', 'appointing_office',
   'appointing_person', 'contact_person', 'contact_phone', 'address', 'district',
   'date_loss', 'date_intimation',

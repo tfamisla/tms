@@ -357,8 +357,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <input id="nj-policy-name">
         </div>
         <div class="form-field">
-          <label>Policy Period</label>
-          <input id="nj-policy-period" placeholder="e.g. 01-04-2025 to 31-03-2026">
+          <label>Policy Period From</label>
+          <input id="nj-policy-period-from" type="date">
+        </div>
+        <div class="form-field">
+          <label>Policy Period Expiry</label>
+          <input id="nj-policy-period-to" type="date">
         </div>
         <div class="form-field">
           <label>Claim No.</label>
@@ -1072,7 +1076,8 @@ function buildJobPanel(j) {
       <div class="sp-field"><label>District / City</label><input id="sp-f-district" value="${esc(j.district||'')}"></div>
       <div class="sp-field"><label>Policy No.</label><input id="sp-f-policy" value="${esc(j.policy_no||'')}"></div>
       <div class="sp-field"><label>Policy Name</label><input id="sp-f-policy-name" value="${esc(j.policy_name||'')}"></div>
-      <div class="sp-field"><label>Policy Period</label><input id="sp-f-policy-period" value="${esc(j.policy_period||'')}"></div>
+      <div class="sp-field"><label>Policy Period From</label><input type="date" id="sp-f-policy-period-from" value="${j.policy_period_from||''}"></div>
+      <div class="sp-field"><label>Policy Period Expiry</label><input type="date" id="sp-f-policy-period-to" value="${j.policy_period_to||''}"></div>
       <div class="sp-field"><label>Claim No.</label><input id="sp-f-claim" value="${esc(j.claim_no||'')}"></div>
       <div class="sp-field"><label>Peril</label><input id="sp-f-peril" value="${esc(j.peril||'')}"></div>
       <div class="sp-field"><label>Claim Amount (₹)</label><input id="sp-f-amount" value="${esc(j.claim_amount||'')}"></div>
@@ -1204,7 +1209,8 @@ async function saveJob() {
   updates.district      = document.getElementById('sp-f-district')?.value;
   updates.policy_no     = document.getElementById('sp-f-policy')?.value;
   updates.policy_name   = document.getElementById('sp-f-policy-name')?.value;
-  updates.policy_period = document.getElementById('sp-f-policy-period')?.value;
+  updates.policy_period_from = document.getElementById('sp-f-policy-period-from')?.value;
+  updates.policy_period_to   = document.getElementById('sp-f-policy-period-to')?.value;
   updates.claim_no      = document.getElementById('sp-f-claim')?.value;
   updates.peril         = document.getElementById('sp-f-peril')?.value;
   updates.claim_amount  = document.getElementById('sp-f-amount')?.value;
@@ -1251,7 +1257,8 @@ const NJ_FIELD_MAP = {
   'nj-insurer': 'insurer', 'nj-insured': 'insured',
   'nj-contact-person': 'contact_person', 'nj-contact-phone': 'contact_phone',
   'nj-address': 'address', 'nj-district': 'district',
-  'nj-policy': 'policy_no', 'nj-policy-name': 'policy_name', 'nj-policy-period': 'policy_period',
+  'nj-policy': 'policy_no', 'nj-policy-name': 'policy_name',
+  'nj-policy-period-from': 'policy_period_from', 'nj-policy-period-to': 'policy_period_to',
   'nj-claim': 'claim_no', 'nj-peril': 'peril', 'nj-amount': 'claim_amount',
   'nj-estimated-loss': 'estimated_loss', 'nj-gross-loss': 'gross_loss',
   'nj-department': 'department', 'nj-appointing-office': 'appointing_office',
