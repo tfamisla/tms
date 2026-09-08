@@ -16,10 +16,10 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-function json(data, status = 200) {
+function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS, ...extraHeaders },
   });
 }
 
@@ -182,8 +182,127 @@ function initialsFor(name) {
   return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
 }
 
+// ── AUTH ─────────────────────────────────────────────────────
+const SESSION_COOKIE = 'tms_session';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function b64(bytes) { return btoa(String.fromCharCode(...bytes)); }
+function unb64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); }
+
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, key, 256);
+  return `${b64(salt)}:${b64(new Uint8Array(bits))}`;
+}
+
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function verifyPassword(password, stored) {
+  if (!stored) return false;
+  const [saltB64, hashB64] = stored.split(':');
+  if (!saltB64 || !hashB64) return false;
+  const salt = unb64(saltB64);
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, key, 256);
+  return timingSafeEqual(b64(new Uint8Array(bits)), hashB64);
+}
+
+function randomToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return b64(bytes).replace(/[+/=]/g, c => ({ '+': '-', '/': '_', '=': '' }[c]));
+}
+
+function getCookie(request, name) {
+  const header = request.headers.get('Cookie') || '';
+  for (const part of header.split(';')) {
+    const i = part.indexOf('=');
+    if (i === -1) continue;
+    if (part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return null;
+}
+
+function setSessionCookie(token, maxAgeSeconds) {
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+}
+
+async function createSession(db, staffId) {
+  const token = randomToken();
+  const now = Date.now();
+  await db.prepare('INSERT INTO sessions (token, staff_id, created_at, expires_at) VALUES (?,?,?,?)')
+    .bind(token, staffId, now, now + SESSION_TTL_MS).run();
+  return token;
+}
+
+async function getSessionUser(db, request) {
+  const token = getCookie(request, SESSION_COOKIE);
+  if (!token) return null;
+  const session = await db.prepare('SELECT * FROM sessions WHERE token = ?').bind(token).first();
+  if (!session || session.expires_at < Date.now()) return null;
+  return db.prepare('SELECT id, name, role, access_role, initials, color FROM staff WHERE id = ?')
+    .bind(session.staff_id).first();
+}
+
+function isAdmin(user) {
+  return !!user && (user.id === 'rajan' || user.access_role === 'admin');
+}
+
+async function listRoster(db) {
+  const { results } = await db.prepare('SELECT id, name FROM staff ORDER BY created_at ASC').all();
+  return results;
+}
+
+async function login(db, body) {
+  if (!body || !body.id || !body.password) throw new Error('id and password are required');
+  const user = await db.prepare('SELECT * FROM staff WHERE id = ?').bind(body.id).first();
+  if (!user) throw new Error('Unknown user');
+
+  if (!user.password_hash) {
+    // No one has a password yet on a fresh install. Only the permanent
+    // super admin (rajanaren) may self-activate; everyone else must be
+    // given a password by an admin via the Staff screen.
+    if (user.id !== 'rajan') {
+      throw new Error('Account not yet activated — ask your admin to set your password');
+    }
+    if (body.password.length < 6) throw new Error('Password must be at least 6 characters');
+    user.password_hash = await hashPassword(body.password);
+    await db.prepare('UPDATE staff SET password_hash = ?, access_role = ? WHERE id = ?')
+      .bind(user.password_hash, 'admin', user.id).run();
+  } else {
+    const ok = await verifyPassword(body.password, user.password_hash);
+    if (!ok) throw new Error('Incorrect password');
+  }
+
+  const token = await createSession(db, user.id);
+  const { password_hash, ...safe } = user;
+  return { user: safe, cookie: setSessionCookie(token, SESSION_TTL_MS / 1000) };
+}
+
+async function changePassword(db, user, body) {
+  if (!body || !body.newPassword || body.newPassword.length < 6) {
+    throw new Error('New password must be at least 6 characters');
+  }
+  const row = await db.prepare('SELECT * FROM staff WHERE id = ?').bind(user.id).first();
+  if (row.password_hash) {
+    if (!body.oldPassword || !(await verifyPassword(body.oldPassword, row.password_hash))) {
+      throw new Error('Current password is incorrect');
+    }
+  }
+  const hash = await hashPassword(body.newPassword);
+  await db.prepare('UPDATE staff SET password_hash = ? WHERE id = ?').bind(hash, user.id).run();
+}
+
+// ── STAFF ────────────────────────────────────────────────────
 async function listStaff(db) {
-  const { results } = await db.prepare('SELECT * FROM staff ORDER BY created_at ASC').all();
+  const { results } = await db.prepare(
+    'SELECT id, name, role, access_role, initials, color, created_at FROM staff ORDER BY created_at ASC'
+  ).all();
   return results;
 }
 
@@ -198,15 +317,18 @@ async function createStaff(db, body) {
     id,
     name,
     role: (body.role || '').trim(),
+    access_role: body.access_role === 'admin' ? 'admin' : 'staff',
     initials: (body.initials || initialsFor(name)).trim().toUpperCase().slice(0, 3),
     color: body.color || STAFF_COLORS[count % STAFF_COLORS.length],
     created_at: now,
   };
+  const password_hash = body.password ? await hashPassword(body.password) : null;
 
   await db.prepare(`
-    INSERT INTO staff (id, name, role, initials, color, created_at) VALUES (?,?,?,?,?,?)
-  `).bind(staffMember.id, staffMember.name, staffMember.role, staffMember.initials,
-    staffMember.color, staffMember.created_at).run();
+    INSERT INTO staff (id, name, role, access_role, initials, color, created_at, password_hash)
+    VALUES (?,?,?,?,?,?,?,?)
+  `).bind(staffMember.id, staffMember.name, staffMember.role, staffMember.access_role,
+    staffMember.initials, staffMember.color, staffMember.created_at, password_hash).run();
 
   return staffMember;
 }
@@ -227,18 +349,43 @@ async function updateStaff(db, id, body) {
     sets.push(`${field} = ?`);
     values.push(value);
   }
+
+  if (body.access_role !== undefined) {
+    // rajanaren is the permanent super admin and can never be demoted.
+    const access_role = id === 'rajan' ? 'admin' : (body.access_role === 'admin' ? 'admin' : 'staff');
+    sets.push('access_role = ?');
+    values.push(access_role);
+  }
+
+  if (body.password) {
+    if (body.password.length < 6) throw new Error('Password must be at least 6 characters');
+    sets.push('password_hash = ?');
+    values.push(await hashPassword(body.password));
+  }
+
   if (sets.length === 0) return existing;
 
   values.push(id);
   await db.prepare(`UPDATE staff SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
 
-  return db.prepare('SELECT * FROM staff WHERE id = ?').bind(id).first();
+  const { password_hash, ...safe } = await db.prepare('SELECT * FROM staff WHERE id = ?').bind(id).first();
+  return safe;
 }
 
 async function deleteStaff(db, id) {
+  if (id === 'rajan') throw new Error('The super admin account cannot be deleted');
   const existing = await db.prepare('SELECT 1 FROM staff WHERE id = ?').bind(id).first();
   if (!existing) throw new Error('staff member not found');
   await db.prepare('DELETE FROM staff WHERE id = ?').bind(id).run();
+  await db.prepare('DELETE FROM sessions WHERE staff_id = ?').bind(id).run();
+}
+
+// ── INSURERS ─────────────────────────────────────────────────
+function acronymFor(name) {
+  const words = String(name).trim().split(/\s+/);
+  let ac = words.map(w => w[0] || '').join('').toUpperCase();
+  if (ac.length < 2) ac = String(name).toUpperCase().replace(/[^A-Z]/g, '');
+  return ac.slice(0, 5);
 }
 
 async function listInsurers(db) {
@@ -255,12 +402,43 @@ async function createInsurer(db, body) {
 
   const id = await uniqueId(db, 'insurers', slugify(name));
   const now = Date.now();
-  const insurer = { id, name, created_at: now };
+  const acronym = (body.acronym || acronymFor(name)).trim().toUpperCase().slice(0, 5);
+  const insurer = { id, name, acronym, created_at: now };
 
-  await db.prepare('INSERT INTO insurers (id, name, created_at) VALUES (?,?,?)')
-    .bind(insurer.id, insurer.name, insurer.created_at).run();
+  await db.prepare('INSERT INTO insurers (id, name, acronym, created_at) VALUES (?,?,?,?)')
+    .bind(insurer.id, insurer.name, insurer.acronym, insurer.created_at).run();
 
   return insurer;
+}
+
+const INSURER_UPDATABLE_FIELDS = ['name', 'acronym'];
+
+async function updateInsurer(db, id, body) {
+  const existing = await db.prepare('SELECT * FROM insurers WHERE id = ?').bind(id).first();
+  if (!existing) throw new Error('insurer not found');
+
+  const sets = [];
+  const values = [];
+  for (const field of INSURER_UPDATABLE_FIELDS) {
+    if (body[field] === undefined) continue;
+    let value = String(body[field]).trim();
+    if (field === 'name' && !value) throw new Error('name is required');
+    if (field === 'acronym') value = value.toUpperCase().slice(0, 5);
+    sets.push(`${field} = ?`);
+    values.push(value);
+  }
+  if (sets.length === 0) return existing;
+
+  values.push(id);
+  await db.prepare(`UPDATE insurers SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
+
+  return db.prepare('SELECT * FROM insurers WHERE id = ?').bind(id).first();
+}
+
+async function deleteInsurer(db, id) {
+  const existing = await db.prepare('SELECT 1 FROM insurers WHERE id = ?').bind(id).first();
+  if (!existing) throw new Error('insurer not found');
+  await db.prepare('DELETE FROM insurers WHERE id = ?').bind(id).run();
 }
 
 export default {
@@ -274,6 +452,37 @@ export default {
     }
 
     try {
+      // ── Public auth routes (no session required) ──
+      if (pathname === '/api/auth/roster' && request.method === 'GET') {
+        return json(await listRoster(db));
+      }
+
+      if (pathname === '/api/auth/login' && request.method === 'POST') {
+        const body = await request.json();
+        const { user, cookie } = await login(db, body);
+        return json(user, 200, { 'Set-Cookie': cookie });
+      }
+
+      // ── Everything below requires a logged-in session ──
+      const user = await getSessionUser(db, request);
+      if (!user) return error('Not authenticated', 401);
+
+      if (pathname === '/api/auth/me' && request.method === 'GET') {
+        return json(user);
+      }
+
+      if (pathname === '/api/auth/logout' && request.method === 'POST') {
+        const token = getCookie(request, SESSION_COOKIE);
+        if (token) await db.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
+        return json({ ok: true }, 200, { 'Set-Cookie': setSessionCookie('', 0) });
+      }
+
+      if (pathname === '/api/auth/change-password' && request.method === 'POST') {
+        const body = await request.json();
+        await changePassword(db, user, body);
+        return json({ ok: true });
+      }
+
       if (pathname === '/api/jobs' && request.method === 'GET') {
         return json(await listJobs(db));
       }
@@ -298,17 +507,20 @@ export default {
       }
 
       if (pathname === '/api/staff' && request.method === 'POST') {
+        if (!isAdmin(user)) return error('Admin access required', 403);
         const body = await request.json();
         return json(await createStaff(db, body), 201);
       }
 
       if (pathname.startsWith('/api/staff/') && request.method === 'PATCH') {
+        if (!isAdmin(user)) return error('Admin access required', 403);
         const id = decodeURIComponent(pathname.slice('/api/staff/'.length));
         const body = await request.json();
         return json(await updateStaff(db, id, body));
       }
 
       if (pathname.startsWith('/api/staff/') && request.method === 'DELETE') {
+        if (!isAdmin(user)) return error('Admin access required', 403);
         const id = decodeURIComponent(pathname.slice('/api/staff/'.length));
         await deleteStaff(db, id);
         return json({ ok: true });
@@ -321,6 +533,18 @@ export default {
       if (pathname === '/api/insurers' && request.method === 'POST') {
         const body = await request.json();
         return json(await createInsurer(db, body), 201);
+      }
+
+      if (pathname.startsWith('/api/insurers/') && request.method === 'PATCH') {
+        const id = decodeURIComponent(pathname.slice('/api/insurers/'.length));
+        const body = await request.json();
+        return json(await updateInsurer(db, id, body));
+      }
+
+      if (pathname.startsWith('/api/insurers/') && request.method === 'DELETE') {
+        const id = decodeURIComponent(pathname.slice('/api/insurers/'.length));
+        await deleteInsurer(db, id);
+        return json({ ok: true });
       }
 
       return error('Not found', 404);

@@ -176,6 +176,21 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
 .btn-primary:hover{opacity:.88}
 .btn-secondary{background:var(--ground);border:1px solid var(--border);color:var(--text-sec);font-family:inherit;font-size:13.5px;padding:9px 18px;border-radius:var(--radius-sm);cursor:pointer}
 
+/* ── LOGIN ── */
+.login-overlay{position:fixed;inset:0;background:var(--navy-mid);z-index:500;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-overlay[hidden]{display:none!important}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:360px;box-shadow:var(--shadow);padding:28px;display:flex;flex-direction:column;gap:14px}
+.login-brand{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:.12em;color:var(--amber);font-weight:600}
+.login-box h2{font-size:19px;font-weight:600;margin-bottom:4px}
+.login-error{background:var(--red-bg);color:var(--red);font-size:12.5px;padding:8px 10px;border-radius:var(--radius-sm)}
+.login-error[hidden]{display:none!important}
+.login-hint{font-size:11px;color:var(--text-faint);text-align:center;line-height:1.5}
+.topbar-user{display:flex;align-items:center;gap:8px;font-size:12.5px;color:rgba(255,255,255,.85)}
+.role-badge{font-size:9.5px;font-weight:700;letter-spacing:.05em;color:var(--amber);border:1px solid rgba(201,125,14,.4);padding:1px 6px;border-radius:100px}
+.topbar-user .role-badge{color:var(--amber-lt);border-color:rgba(240,169,48,.4)}
+.btn-logout{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);color:#fff;font-family:inherit;font-size:12px;padding:5px 10px;border-radius:var(--radius-sm);cursor:pointer}
+.btn-logout:hover{background:rgba(255,255,255,.18)}
+
 /* ── CONFIG BANNER ── */
 .config-banner{background:var(--amber-bg);border-bottom:1px solid var(--amber);padding:8px 16px;font-size:12.5px;color:var(--text-sec);display:flex;align-items:center;gap:10px;flex-shrink:0}
 .config-banner strong{color:var(--amber)}
@@ -191,6 +206,25 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
 </style>
 </head>
 <body>
+
+<!-- ── LOGIN SCREEN ── -->
+<div class="login-overlay" id="loginScreen" hidden>
+  <div class="login-box">
+    <div class="login-brand">TFAM · TMS</div>
+    <h2>Sign in</h2>
+    <div class="form-field full">
+      <label>Name</label>
+      <select id="login-id"></select>
+    </div>
+    <div class="form-field full">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="Password" onkeydown="if(event.key==='Enter')submitLogin()">
+    </div>
+    <div class="login-error" id="login-error" hidden></div>
+    <button class="btn-primary" onclick="submitLogin()">Sign In</button>
+    <div class="login-hint">First time signing in as the super admin? Just enter the password you want to use — it will be set automatically.</div>
+  </div>
+</div>
 
 <!-- Config banner shown until API URL is set -->
 <div class="config-banner" id="configBanner">
@@ -208,9 +242,8 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
   </div>
   <div class="topbar-right">
     <span class="live-dot" id="liveDot" title="Live sync"></span>
-    <select class="user-sel" id="userSel" onchange="onUserChange()">
-      <option value="">— Who are you? —</option>
-    </select>
+    <span class="topbar-user" id="topbarUser"></span>
+    <button class="btn-logout" onclick="logout()">Log out</button>
     <button class="btn-new" onclick="openNewJob()">+ New Job</button>
   </div>
 </div>
@@ -231,8 +264,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
 <div class="view" id="view-staff">
   <div class="staff-wrap">
     <div class="log-toolbar">
-      <button class="btn-new" onclick="openNewStaff()">+ Add Staff</button>
+      <button class="btn-new" id="addStaffBtn" onclick="openNewStaff()" hidden>+ Add Staff</button>
       <button class="btn-new" onclick="openNewInsurer()">+ Add Insurer</button>
+      <button class="btn-secondary" onclick="openChangePassword()">Change My Password</button>
     </div>
     <div class="staff-grid" id="staffGrid"></div>
     <div class="sp-section-label" style="margin-top:24px">Insurance Companies</div>
@@ -363,6 +397,17 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <label>Color</label>
           <input id="ns-color" type="color" value="#6B7AFF">
         </div>
+        <div class="form-field">
+          <label>Access Level</label>
+          <select id="ns-access-role">
+            <option value="staff">Staff</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label id="ns-password-label">Password</label>
+          <input id="ns-password" type="password" placeholder="Optional — leave blank">
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -373,11 +418,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
   </div>
 </div>
 
-<!-- ── NEW INSURER MODAL ── -->
+<!-- ── NEW/EDIT INSURER MODAL ── -->
 <div class="modal-overlay" id="newInsurerModal" hidden onclick="e=>e.target===this&&closeNewInsurer()">
   <div class="modal">
     <div class="modal-hdr">
-      <h2>Add Insurance Company</h2>
+      <h2 id="ni-modal-title">Add Insurance Company</h2>
       <button class="sp-close" onclick="closeNewInsurer()">✕</button>
     </div>
     <div class="modal-body">
@@ -386,11 +431,46 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <label>Company Name *</label>
           <input id="ni-name" placeholder="e.g. New India Assurance" required>
         </div>
+        <div class="form-field full">
+          <label>Acronym (up to 5 letters)</label>
+          <input id="ni-acronym" maxlength="5" placeholder="Auto from name, e.g. NIACL">
+        </div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-primary" onclick="submitNewInsurer()">Add Insurer</button>
+      <button class="btn-primary" onclick="submitNewInsurer()" id="ni-submit-btn">Add Insurer</button>
       <button class="btn-secondary" onclick="closeNewInsurer()">Cancel</button>
+      <button class="btn-secondary" onclick="deleteInsurerEntry()" id="ni-delete-btn" hidden style="color:#EF4444;margin-left:auto">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CHANGE PASSWORD MODAL ── -->
+<div class="modal-overlay" id="changePasswordModal" hidden onclick="e=>e.target===this&&closeChangePassword()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Change My Password</h2>
+      <button class="sp-close" onclick="closeChangePassword()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Current Password *</label>
+          <input id="cp-old" type="password">
+        </div>
+        <div class="form-field full">
+          <label>New Password (min 6 characters) *</label>
+          <input id="cp-new" type="password">
+        </div>
+        <div class="form-field full">
+          <label>Confirm New Password *</label>
+          <input id="cp-confirm" type="password">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitChangePassword()">Save Password</button>
+      <button class="btn-secondary" onclick="closeChangePassword()">Cancel</button>
     </div>
   </div>
 </div>
@@ -444,31 +524,99 @@ const DOCS = [
 let jobs = [];
 let log  = [];
 let INSURERS = [];
-let currentUser = localStorage.getItem('tms_user') || '';
+let currentUser = null;        // logged-in staff id
+let currentUserRecord = null;  // full staff record {id,name,role,access_role,...}
 let stageFilter = null;
 let openJobId   = null;
 let pollTimer   = null;
 let apiReady    = API !== 'YOUR_WORKER_URL_HERE';
+
+function isAdminUser() {
+  return !!currentUserRecord && (currentUserRecord.id === 'rajan' || currentUserRecord.access_role === 'admin');
+}
 
 // ── INIT ──────────────────────────────────────────────────────
 (function init() {
   if (!apiReady) {
     document.getElementById('configBanner').hidden = false;
     document.getElementById('liveDot').classList.add('offline');
-  } else {
-    document.getElementById('configBanner').hidden = true;
+    renderAll();
+    return;
   }
-  buildUserSel();
+  document.getElementById('configBanner').hidden = true;
+  checkSession();
+})();
+
+// ── AUTH ──────────────────────────────────────────────────────
+async function checkSession() {
+  try {
+    const r = await fetch(API + '/api/auth/me');
+    if (r.ok) {
+      currentUserRecord = await r.json();
+      currentUser = currentUserRecord.id;
+      onLoggedIn();
+    } else {
+      showLogin();
+    }
+  } catch(e) {
+    showLogin();
+  }
+}
+
+async function showLogin() {
+  document.getElementById('loginScreen').hidden = false;
+  document.getElementById('login-error').hidden = true;
+  document.getElementById('login-password').value = '';
+  try {
+    const r = await fetch(API + '/api/auth/roster');
+    const roster = r.ok ? await r.json() : [];
+    document.getElementById('login-id').innerHTML =
+      roster.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  } catch(e) {}
+}
+
+async function submitLogin() {
+  const id = document.getElementById('login-id').value;
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  if (!id || !password) { errEl.textContent = 'Select your name and enter a password.'; errEl.hidden = false; return; }
+  try {
+    const r = await fetch(API + '/api/auth/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id, password }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    currentUserRecord = await r.json();
+    currentUser = currentUserRecord.id;
+    onLoggedIn();
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.hidden = false;
+  }
+}
+
+function onLoggedIn() {
+  document.getElementById('loginScreen').hidden = true;
+  const badge = isAdminUser() ? '<span class="role-badge">ADMIN</span>' : '';
+  document.getElementById('topbarUser').innerHTML = `${esc(currentUserRecord.name)} ${badge}`;
+  document.getElementById('addStaffBtn').hidden = !isAdminUser();
   buildNewJobAssign();
   buildLogFilters();
-  if (apiReady) {
-    fetchAll();
-    pollTimer = setInterval(fetchAll, 5000);
-  } else {
-    // Demo mode — render empty state
-    renderAll();
-  }
-})();
+  fetchAll();
+  if (!pollTimer) pollTimer = setInterval(fetchAll, 5000);
+}
+
+function sessionExpired() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+  currentUser = null;
+  currentUserRecord = null;
+  showLogin();
+}
+
+async function logout() {
+  try { await fetch(API + '/api/auth/logout', { method: 'POST' }); } catch(e) {}
+  sessionExpired();
+}
 
 // ── API CALLS ─────────────────────────────────────────────────
 async function fetchAll() {
@@ -479,13 +627,13 @@ async function fetchAll() {
       fetch(API + '/api/staff'),
       fetch(API + '/api/insurers'),
     ]);
+    if ([jRes, lRes, sRes, iRes].some(r => r.status === 401)) { sessionExpired(); return; }
     if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok) throw new Error('bad response');
     jobs = await jRes.json();
     log  = await lRes.json();
     TEAM = await sRes.json();
     INSURERS = await iRes.json();
     setOnline(true);
-    buildUserSel();
     buildLogFilters();
     buildInsurerList();
     if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
@@ -501,6 +649,7 @@ async function apiPost(path, body) {
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body),
   });
+  if (r.status === 401) { sessionExpired(); throw new Error('Session expired — please sign in again.'); }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -511,6 +660,14 @@ async function apiPatch(path, body) {
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body),
   });
+  if (r.status === 401) { sessionExpired(); throw new Error('Session expired — please sign in again.'); }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function apiDelete(path) {
+  const r = await fetch(API + path, { method: 'DELETE' });
+  if (r.status === 401) { sessionExpired(); throw new Error('Session expired — please sign in again.'); }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -616,13 +773,18 @@ function renderStaff() {
         <span class="stage-badge" style="color:${s.color};border-color:${s.color}22">${s.label}</span>
       </div>`;
     }).join('');
+    const canEdit = isAdminUser();
+    const canChangeOwnPw = !canEdit && m.id === currentUser;
+    const hdrAction = canEdit ? `openEditStaff('${m.id}')` : (canChangeOwnPw ? 'openChangePassword()' : '');
+    const adminBadge = (m.id === 'rajan' || m.access_role === 'admin')
+      ? '<span class="role-badge" style="margin-left:6px">ADMIN</span>' : '';
     return `
     <div class="staff-card">
-      <div class="staff-hdr" style="cursor:pointer" onclick="openEditStaff('${m.id}')" title="Click to edit">
+      <div class="staff-hdr" ${hdrAction ? `style="cursor:pointer" onclick="${hdrAction}" title="Click to edit"` : ''}>
         <div class="staff-avatar" style="background:${m.color}">${m.initials}</div>
         <div>
-          <div class="staff-name">${m.name}</div>
-          <div class="staff-role">${m.role}</div>
+          <div class="staff-name">${esc(m.name)}${adminBadge}</div>
+          <div class="staff-role">${esc(m.role || '')}</div>
         </div>
         <div class="staff-job-count">${myJobs.length} job${myJobs.length !== 1 ? 's' : ''}</div>
       </div>
@@ -634,7 +796,10 @@ function renderStaff() {
 
   document.getElementById('insurerGrid').innerHTML = INSURERS.length === 0
     ? '<div style="font-size:11px;color:var(--text-faint);padding:4px 0">No insurers added yet</div>'
-    : INSURERS.map(i => `<div class="assign-chip">${esc(i.name)}</div>`).join('');
+    : INSURERS.map(i => `
+      <div class="assign-chip" style="cursor:pointer" onclick="openEditInsurer('${i.id}')" title="Click to edit">
+        ${i.acronym ? `<strong>${esc(i.acronym)}</strong> —` : ''} ${esc(i.name)}
+      </div>`).join('');
 }
 
 // ── WORK LOG ─────────────────────────────────────────────────
@@ -979,30 +1144,40 @@ async function submitNewJob() {
   }
 }
 
-// ── NEW / EDIT STAFF ─────────────────────────────────────────
+// ── NEW / EDIT STAFF (admin only) ────────────────────────────
 let editingStaffId = null;
 
 function openNewStaff() {
+  if (!isAdminUser()) return;
   editingStaffId = null;
   document.getElementById('ns-modal-title').textContent = 'Add Staff Member';
   document.getElementById('ns-submit-btn').textContent = 'Add Staff';
   document.getElementById('ns-delete-btn').hidden = true;
-  ['ns-name','ns-role','ns-initials'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('ns-password-label').textContent = 'Password';
+  document.getElementById('ns-password').placeholder = 'Optional — leave blank';
+  ['ns-name','ns-role','ns-initials','ns-password'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('ns-color').value = '#6B7AFF';
+  document.getElementById('ns-access-role').value = 'staff';
+  document.getElementById('ns-access-role').disabled = false;
   document.getElementById('newStaffModal').hidden = false;
 }
 
 function openEditStaff(id) {
   const m = teamMember(id);
-  if (!m) return;
+  if (!m || !isAdminUser()) return;
   editingStaffId = id;
   document.getElementById('ns-modal-title').textContent = 'Edit Staff Member';
   document.getElementById('ns-submit-btn').textContent = 'Save Changes';
-  document.getElementById('ns-delete-btn').hidden = false;
+  document.getElementById('ns-delete-btn').hidden = (id === 'rajan');
+  document.getElementById('ns-password-label').textContent = 'Reset Password';
+  document.getElementById('ns-password').placeholder = 'Leave blank to keep unchanged';
   document.getElementById('ns-name').value = m.name;
   document.getElementById('ns-role').value = m.role || '';
   document.getElementById('ns-initials').value = m.initials || '';
   document.getElementById('ns-color').value = m.color || '#6B7AFF';
+  document.getElementById('ns-password').value = '';
+  document.getElementById('ns-access-role').value = (id === 'rajan') ? 'admin' : (m.access_role || 'staff');
+  document.getElementById('ns-access-role').disabled = (id === 'rajan');
   document.getElementById('newStaffModal').hidden = false;
 }
 
@@ -1018,18 +1193,21 @@ async function submitNewStaff() {
     role: document.getElementById('ns-role').value.trim(),
     initials: document.getElementById('ns-initials').value.trim(),
     color: document.getElementById('ns-color').value,
+    access_role: document.getElementById('ns-access-role').value,
   };
+  const password = document.getElementById('ns-password').value;
+  if (password) body.password = password;
 
   try {
     if (editingStaffId) {
       const updated = await apiPatch('/api/staff/' + encodeURIComponent(editingStaffId), body);
       TEAM = TEAM.map(m => m.id === updated.id ? updated : m);
+      if (updated.id === currentUser) currentUserRecord = updated;
     } else {
       const member = await apiPost('/api/staff', body);
       TEAM = [...TEAM, member];
     }
     closeNewStaff();
-    buildUserSel();
     buildLogFilters();
     if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
     renderAll();
@@ -1039,16 +1217,14 @@ async function submitNewStaff() {
 }
 
 async function deleteStaffMember() {
-  if (!editingStaffId) return;
+  if (!editingStaffId || editingStaffId === 'rajan') return;
   const m = teamMember(editingStaffId);
   if (!confirm(`Remove ${m ? m.name : editingStaffId} from staff?`)) return;
 
   try {
-    const r = await fetch(API + '/api/staff/' + encodeURIComponent(editingStaffId), { method: 'DELETE' });
-    if (!r.ok) throw new Error(await r.text());
+    await apiDelete('/api/staff/' + encodeURIComponent(editingStaffId));
     TEAM = TEAM.filter(m => m.id !== editingStaffId);
     closeNewStaff();
-    buildUserSel();
     buildLogFilters();
     if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
     renderAll();
@@ -1057,8 +1233,53 @@ async function deleteStaffMember() {
   }
 }
 
-// ── NEW INSURER ──────────────────────────────────────────────
-function openNewInsurer()  { document.getElementById('newInsurerModal').hidden = false; }
+// ── CHANGE MY PASSWORD (any logged-in user) ──────────────────
+function openChangePassword() {
+  ['cp-old','cp-new','cp-confirm'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('changePasswordModal').hidden = false;
+}
+function closeChangePassword() { document.getElementById('changePasswordModal').hidden = true; }
+
+async function submitChangePassword() {
+  const oldPassword = document.getElementById('cp-old').value;
+  const newPassword = document.getElementById('cp-new').value;
+  const confirmPassword = document.getElementById('cp-confirm').value;
+  if (newPassword.length < 6) { alert('New password must be at least 6 characters.'); return; }
+  if (newPassword !== confirmPassword) { alert('New password and confirmation do not match.'); return; }
+
+  try {
+    await apiPost('/api/auth/change-password', { oldPassword, newPassword });
+    closeChangePassword();
+    alert('Password updated.');
+  } catch(e) {
+    alert('Error changing password: ' + e.message);
+  }
+}
+
+// ── NEW / EDIT INSURER ────────────────────────────────────────
+let editingInsurerId = null;
+
+function openNewInsurer() {
+  editingInsurerId = null;
+  document.getElementById('ni-modal-title').textContent = 'Add Insurance Company';
+  document.getElementById('ni-submit-btn').textContent = 'Add Insurer';
+  document.getElementById('ni-delete-btn').hidden = true;
+  ['ni-name','ni-acronym'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('newInsurerModal').hidden = false;
+}
+
+function openEditInsurer(id) {
+  const i = INSURERS.find(x => x.id === id);
+  if (!i) return;
+  editingInsurerId = id;
+  document.getElementById('ni-modal-title').textContent = 'Edit Insurance Company';
+  document.getElementById('ni-submit-btn').textContent = 'Save Changes';
+  document.getElementById('ni-delete-btn').hidden = false;
+  document.getElementById('ni-name').value = i.name;
+  document.getElementById('ni-acronym').value = i.acronym || '';
+  document.getElementById('newInsurerModal').hidden = false;
+}
+
 function closeNewInsurer() { document.getElementById('newInsurerModal').hidden = true; }
 
 async function submitNewInsurer() {
@@ -1066,15 +1287,37 @@ async function submitNewInsurer() {
   if (!name) { alert('Company name is required.'); return; }
   if (!apiReady) { alert('API not configured.'); return; }
 
+  const body = { name, acronym: document.getElementById('ni-acronym').value.trim() };
+
   try {
-    const insurer = await apiPost('/api/insurers', { name });
-    if (!INSURERS.some(i => i.id === insurer.id)) INSURERS = [...INSURERS, insurer];
+    if (editingInsurerId) {
+      const updated = await apiPatch('/api/insurers/' + encodeURIComponent(editingInsurerId), body);
+      INSURERS = INSURERS.map(i => i.id === updated.id ? updated : i);
+    } else {
+      const insurer = await apiPost('/api/insurers', body);
+      if (!INSURERS.some(i => i.id === insurer.id)) INSURERS = [...INSURERS, insurer];
+    }
     closeNewInsurer();
     buildInsurerList();
     renderStaff();
-    document.getElementById('ni-name').value = '';
   } catch(e) {
-    alert('Error adding insurer: ' + e.message);
+    alert('Error saving insurer: ' + e.message);
+  }
+}
+
+async function deleteInsurerEntry() {
+  if (!editingInsurerId) return;
+  const i = INSURERS.find(x => x.id === editingInsurerId);
+  if (!confirm(`Remove ${i ? i.name : editingInsurerId} from insurers?`)) return;
+
+  try {
+    await apiDelete('/api/insurers/' + encodeURIComponent(editingInsurerId));
+    INSURERS = INSURERS.filter(i => i.id !== editingInsurerId);
+    closeNewInsurer();
+    buildInsurerList();
+    renderStaff();
+  } catch(e) {
+    alert('Error removing insurer: ' + e.message);
   }
 }
 
@@ -1082,22 +1325,6 @@ async function submitNewInsurer() {
 function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().includes(name.slice(0,4))));
-}
-
-// ── USER ──────────────────────────────────────────────────────
-function buildUserSel() {
-  const sel = document.getElementById('userSel');
-  sel.innerHTML = '<option value="">— Who are you? —</option>';
-  TEAM.forEach(m => {
-    const o = document.createElement('option');
-    o.value = m.id; o.textContent = m.name;
-    sel.appendChild(o);
-  });
-  sel.value = currentUser;
-}
-function onUserChange() {
-  currentUser = document.getElementById('userSel').value;
-  localStorage.setItem('tms_user', currentUser);
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
