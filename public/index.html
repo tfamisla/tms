@@ -225,10 +225,18 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
   </div>
 </div>
 
+<datalist id="insurerList"></datalist>
+
 <!-- ── STAFF VIEW ── -->
 <div class="view" id="view-staff">
   <div class="staff-wrap">
+    <div class="log-toolbar">
+      <button class="btn-new" onclick="openNewStaff()">+ Add Staff</button>
+      <button class="btn-new" onclick="openNewInsurer()">+ Add Insurer</button>
+    </div>
     <div class="staff-grid" id="staffGrid"></div>
+    <div class="sp-section-label" style="margin-top:24px">Insurance Companies</div>
+    <div class="assigned-grid" id="insurerGrid"></div>
   </div>
 </div>
 
@@ -276,8 +284,12 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <input id="nj-title" placeholder="e.g. Kalyani Textiles — Fire Loss" required>
         </div>
         <div class="form-field">
+          <label>Job ID</label>
+          <input id="nj-id" placeholder="Auto (e.g. TF-004) — leave blank to auto-number">
+        </div>
+        <div class="form-field">
           <label>Insurer</label>
-          <input id="nj-insurer" placeholder="e.g. New India Assurance">
+          <input id="nj-insurer" list="insurerList" placeholder="e.g. New India Assurance">
         </div>
         <div class="form-field">
           <label>Insured Name</label>
@@ -320,6 +332,69 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
   </div>
 </div>
 
+<!-- ── NEW STAFF MODAL ── -->
+<div class="modal-overlay" id="newStaffModal" hidden onclick="e=>e.target===this&&closeNewStaff()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="ns-modal-title">Add Staff Member</h2>
+      <button class="sp-close" onclick="closeNewStaff()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Name *</label>
+          <input id="ns-name" placeholder="e.g. Priya Kumar" required>
+        </div>
+        <div class="form-field">
+          <label>Role</label>
+          <input id="ns-role" list="roleList" placeholder="e.g. Employee Surveyor">
+          <datalist id="roleList">
+            <option value="Director"></option>
+            <option value="Employee Surveyor"></option>
+            <option value="Trainee Surveyor"></option>
+            <option value="Backend Staff"></option>
+          </datalist>
+        </div>
+        <div class="form-field">
+          <label>Initials</label>
+          <input id="ns-initials" maxlength="3" placeholder="Auto from name">
+        </div>
+        <div class="form-field">
+          <label>Color</label>
+          <input id="ns-color" type="color" value="#6B7AFF">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitNewStaff()" id="ns-submit-btn">Add Staff</button>
+      <button class="btn-secondary" onclick="closeNewStaff()">Cancel</button>
+      <button class="btn-secondary" onclick="deleteStaffMember()" id="ns-delete-btn" hidden style="color:#EF4444;margin-left:auto">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── NEW INSURER MODAL ── -->
+<div class="modal-overlay" id="newInsurerModal" hidden onclick="e=>e.target===this&&closeNewInsurer()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Add Insurance Company</h2>
+      <button class="sp-close" onclick="closeNewInsurer()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Company Name *</label>
+          <input id="ni-name" placeholder="e.g. New India Assurance" required>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitNewInsurer()">Add Insurer</button>
+      <button class="btn-secondary" onclick="closeNewInsurer()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // CONFIG — set your Worker URL after deploy
@@ -328,7 +403,8 @@ const API = '';
 // Same-origin: the Worker serves both this page and /api/* routes.
 
 // ── TEAM ─────────────────────────────────────────────────────
-const TEAM = [
+// Populated from /api/staff once live; this is only the offline/demo fallback.
+let TEAM = [
   { id:'rajan',    name:'Raja Naren R',        initials:'RN', role:'Director',          color:'#1B2E5A' },
   { id:'thiravia', name:'Raja Thiravia Kumar', initials:'RT', role:'Director',          color:'#1A4FA0' },
   { id:'surv1',    name:'Employee Surveyor 1', initials:'S1', role:'Employee Surveyor', color:'#1A7A4A' },
@@ -367,6 +443,7 @@ const DOCS = [
 // ── STATE ─────────────────────────────────────────────────────
 let jobs = [];
 let log  = [];
+let INSURERS = [];
 let currentUser = localStorage.getItem('tms_user') || '';
 let stageFilter = null;
 let openJobId   = null;
@@ -396,14 +473,22 @@ let apiReady    = API !== 'YOUR_WORKER_URL_HERE';
 // ── API CALLS ─────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [jRes, lRes] = await Promise.all([
+    const [jRes, lRes, sRes, iRes] = await Promise.all([
       fetch(API + '/api/jobs'),
       fetch(API + '/api/log'),
+      fetch(API + '/api/staff'),
+      fetch(API + '/api/insurers'),
     ]);
-    if (!jRes.ok || !lRes.ok) throw new Error('bad response');
+    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok) throw new Error('bad response');
     jobs = await jRes.json();
     log  = await lRes.json();
+    TEAM = await sRes.json();
+    INSURERS = await iRes.json();
     setOnline(true);
+    buildUserSel();
+    buildLogFilters();
+    buildInsurerList();
+    if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
     renderAll();
   } catch(e) {
     setOnline(false);
@@ -533,7 +618,7 @@ function renderStaff() {
     }).join('');
     return `
     <div class="staff-card">
-      <div class="staff-hdr">
+      <div class="staff-hdr" style="cursor:pointer" onclick="openEditStaff('${m.id}')" title="Click to edit">
         <div class="staff-avatar" style="background:${m.color}">${m.initials}</div>
         <div>
           <div class="staff-name">${m.name}</div>
@@ -546,16 +631,28 @@ function renderStaff() {
       </div>
     </div>`;
   }).join('');
+
+  document.getElementById('insurerGrid').innerHTML = INSURERS.length === 0
+    ? '<div style="font-size:11px;color:var(--text-faint);padding:4px 0">No insurers added yet</div>'
+    : INSURERS.map(i => `<div class="assign-chip">${esc(i.name)}</div>`).join('');
 }
 
 // ── WORK LOG ─────────────────────────────────────────────────
 function buildLogFilters() {
   const mSel = document.getElementById('logMemberFilter');
+  const cur = mSel.value;
+  mSel.innerHTML = '<option value="">All members</option>';
   TEAM.forEach(m => {
     const o = document.createElement('option');
     o.value = m.id; o.textContent = m.name;
     mSel.appendChild(o);
   });
+  mSel.value = cur;
+}
+
+function buildInsurerList() {
+  document.getElementById('insurerList').innerHTML =
+    INSURERS.map(i => `<option value="${esc(i.name)}"></option>`).join('');
 }
 
 function renderLog() {
@@ -672,7 +769,7 @@ function buildJobPanel(j) {
         <label>Title</label>
         <input id="sp-f-title" value="${esc(j.title)}">
       </div>
-      <div class="sp-field"><label>Insurer</label><input id="sp-f-insurer" value="${esc(j.insurer||'')}"></div>
+      <div class="sp-field"><label>Insurer</label><input id="sp-f-insurer" list="insurerList" value="${esc(j.insurer||'')}"></div>
       <div class="sp-field"><label>Insured</label><input id="sp-f-insured" value="${esc(j.insured||'')}"></div>
       <div class="sp-field"><label>Policy No.</label><input id="sp-f-policy" value="${esc(j.policy_no||'')}"></div>
       <div class="sp-field"><label>Claim No.</label><input id="sp-f-claim" value="${esc(j.claim_no||'')}"></div>
@@ -851,6 +948,7 @@ async function submitNewJob() {
 
   const body = {
     title,
+    id:              document.getElementById('nj-id').value.trim() || undefined,
     insurer:         document.getElementById('nj-insurer').value,
     insured:         document.getElementById('nj-insured').value,
     policy_no:       document.getElementById('nj-policy').value,
@@ -870,7 +968,7 @@ async function submitNewJob() {
     closeNewJob();
     renderAll();
     // Clear form
-    ['nj-title','nj-insurer','nj-insured','nj-policy','nj-claim','nj-peril','nj-amount','nj-dol','nj-doi']
+    ['nj-title','nj-id','nj-insurer','nj-insured','nj-policy','nj-claim','nj-peril','nj-amount','nj-dol','nj-doi']
       .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
     document.querySelectorAll('#nj-assign .assign-chip').forEach(el => {
       el.classList.remove('active');
@@ -878,6 +976,105 @@ async function submitNewJob() {
     });
   } catch(e) {
     alert('Error creating job: ' + e.message);
+  }
+}
+
+// ── NEW / EDIT STAFF ─────────────────────────────────────────
+let editingStaffId = null;
+
+function openNewStaff() {
+  editingStaffId = null;
+  document.getElementById('ns-modal-title').textContent = 'Add Staff Member';
+  document.getElementById('ns-submit-btn').textContent = 'Add Staff';
+  document.getElementById('ns-delete-btn').hidden = true;
+  ['ns-name','ns-role','ns-initials'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('ns-color').value = '#6B7AFF';
+  document.getElementById('newStaffModal').hidden = false;
+}
+
+function openEditStaff(id) {
+  const m = teamMember(id);
+  if (!m) return;
+  editingStaffId = id;
+  document.getElementById('ns-modal-title').textContent = 'Edit Staff Member';
+  document.getElementById('ns-submit-btn').textContent = 'Save Changes';
+  document.getElementById('ns-delete-btn').hidden = false;
+  document.getElementById('ns-name').value = m.name;
+  document.getElementById('ns-role').value = m.role || '';
+  document.getElementById('ns-initials').value = m.initials || '';
+  document.getElementById('ns-color').value = m.color || '#6B7AFF';
+  document.getElementById('newStaffModal').hidden = false;
+}
+
+function closeNewStaff() { document.getElementById('newStaffModal').hidden = true; }
+
+async function submitNewStaff() {
+  const name = document.getElementById('ns-name').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  if (!apiReady) { alert('API not configured.'); return; }
+
+  const body = {
+    name,
+    role: document.getElementById('ns-role').value.trim(),
+    initials: document.getElementById('ns-initials').value.trim(),
+    color: document.getElementById('ns-color').value,
+  };
+
+  try {
+    if (editingStaffId) {
+      const updated = await apiPatch('/api/staff/' + encodeURIComponent(editingStaffId), body);
+      TEAM = TEAM.map(m => m.id === updated.id ? updated : m);
+    } else {
+      const member = await apiPost('/api/staff', body);
+      TEAM = [...TEAM, member];
+    }
+    closeNewStaff();
+    buildUserSel();
+    buildLogFilters();
+    if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
+    renderAll();
+  } catch(e) {
+    alert('Error saving staff: ' + e.message);
+  }
+}
+
+async function deleteStaffMember() {
+  if (!editingStaffId) return;
+  const m = teamMember(editingStaffId);
+  if (!confirm(`Remove ${m ? m.name : editingStaffId} from staff?`)) return;
+
+  try {
+    const r = await fetch(API + '/api/staff/' + encodeURIComponent(editingStaffId), { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+    TEAM = TEAM.filter(m => m.id !== editingStaffId);
+    closeNewStaff();
+    buildUserSel();
+    buildLogFilters();
+    if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
+    renderAll();
+  } catch(e) {
+    alert('Error removing staff: ' + e.message);
+  }
+}
+
+// ── NEW INSURER ──────────────────────────────────────────────
+function openNewInsurer()  { document.getElementById('newInsurerModal').hidden = false; }
+function closeNewInsurer() { document.getElementById('newInsurerModal').hidden = true; }
+
+async function submitNewInsurer() {
+  const name = document.getElementById('ni-name').value.trim();
+  if (!name) { alert('Company name is required.'); return; }
+  if (!apiReady) { alert('API not configured.'); return; }
+
+  try {
+    const insurer = await apiPost('/api/insurers', { name });
+    if (!INSURERS.some(i => i.id === insurer.id)) INSURERS = [...INSURERS, insurer];
+    closeNewInsurer();
+    buildInsurerList();
+    renderStaff();
+    document.getElementById('ni-name').value = '';
+  } catch(e) {
+    alert('Error adding insurer: ' + e.message);
   }
 }
 
@@ -890,6 +1087,7 @@ function switchView(name) {
 // ── USER ──────────────────────────────────────────────────────
 function buildUserSel() {
   const sel = document.getElementById('userSel');
+  sel.innerHTML = '<option value="">— Who are you? —</option>';
   TEAM.forEach(m => {
     const o = document.createElement('option');
     o.value = m.id; o.textContent = m.name;
