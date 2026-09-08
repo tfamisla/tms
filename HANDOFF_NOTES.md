@@ -142,9 +142,28 @@ grep -oE 'id=\"[^\"]+\"' public/index.html | sort | uniq -d   # must be empty (n
 
 8. **Job Details restructure (commit `b09afa0`, migration `006_job_details_restructure.sql`)**: split into two labeled sections on both the New Job form and job detail panel — **Insurer Details** (Insurance Company, Insurer Branch Name, Appointing Office Address/District/State, Appointing Person + Email + Phone) and **Claim Details** (Insured Name/Address/District/State/Pincode, multi-contact list, Deputation Date/Mode, Loss Date, Claim No., Policy Name/No./Period, Peril, Estimated Loss, Claim Amount, Gross Loss, Department). New `jobs.contacts` JSON column (array of `{name,designation,phone,email}`) replaces the old single `contact_person`/`contact_phone` fields (kept, unused, for backward compat) — reusable helpers `contactRowHtml()`/`addContactRow()`/`renderContacts()`/`collectContacts()` drive an add/remove-row UI shared between both forms. "Deputation Date" reuses the existing `date_intimation` column (just relabeled) per the user's explicit clarification that intimation/deputation/appointment dates mean the same thing in their workflow — the separate `appointment_date`/`appointment_confirmed` pair (used for survey scheduling status) was deliberately left untouched as a distinct feature. "Deputation Mode" (Email/Call) is a new `deputation_mode` column. The old combined `appointing_office` text column is kept but no longer read/written, superseded by the split `appointing_office_address`/`_district`/`_state` columns.
 
+## TMS V0.7 — Finalize New Job Entry (done, commit `574a67b`, migration `007_item_type.sql`)
+
+Reorganized the New Job form (and lightly touched the job detail panel — see below) into the exact required sequence, verified live via DOM inspection:
+
+1. **Job Title** (unlabeled, unchanged — still the only hard-required field) → **Job Number** section (relabeled from "Job ID"; blank still means auto-numbered TF-XXX, unchanged behavior)
+2. **Insurer Details**: Insurance Company → Insurer Branch Name → *Appointing Office* subgroup (Address/District/State) → *Appointing Person* subgroup (Name/Email/Phone)
+3. **Insured Details** (newly split out as its own top-level section, previously merged into Claim Details): Insured Name → *Insured Address* subgroup (Address/District/State/Pincode) → Contact Person(s) (multi-contact, unchanged `contactRowHtml()`/`addContactRow()`/`renderContacts()`/`collectContacts()`)
+4. **Claim Details**, now organized into labeled subgroups: *Deputation* (Date, Mode) → *Loss Details* (Date of Loss, Department, Peril/Nature of Loss, **Type of Item/Property Involved** — new field, see below) → *Claim Identification* (Claim No., Policy Name, Policy No.) → *Policy Period* (From/To — reuses the existing `policy_period_from`/`policy_period_to` columns from V0.6, not renamed) → *Financial Details* (Estimated Loss, Claim Amount, Gross Loss Amount)
+5. **Responsibility Allocation** (moved to be the final section before the button, now explicitly labeled — previously unlabeled): Director Responsible → Surveyor Who Is Signing → TFAM Branch Which Is Handling → Backstaff/Surveyor Responsible
+6. **Create Job** button
+
+New schema field: `jobs.item_type` ("Type of Item / Property Involved" — TEXT, default `''`), added via `migrations/007_item_type.sql`, intended to later feed a Policy Type + Department + Peril + Item Type → dynamic Document Requirement/LOR engine (not built in V0.7, deliberately). No other new columns — `policy_period_from`/`_to`, `appointing_office_*`, `contacts`, `deputation_mode`, etc. all already existed from V0.6 and were reused, not duplicated.
+
+**Validation added** (new `isValidEmail()`, `isValidPhone()`, `validatePolicyPeriod()`, `validateContacts()` helpers, shared by New Job submit and job detail Save): Policy Period Expiry can't be earlier than Policy Period From (blocking, both client-side and server-side in `worker.js`'s `createJob`/`updateJob`); contact and Appointing Person email/phone are format-checked only when non-empty — nothing is forced to be filled in, since TFAM often deputes with incomplete information. `<input inputmode="decimal">` (not `type="number"`) was kept for the currency fields so Indian comma-formatted entry (e.g. "45,00,000") keeps working — these stay TEXT columns, not real numerics.
+
+**Job detail panel**: deliberately NOT redesigned into the same Insured/Insurer/Claim split (per explicit instruction) — only the new `item_type` field was added into its existing Claim Details grid so it's persisted/editable there too. A full Job Update/lifecycle redesign is V0.8's job.
+
 ## Not yet built / open items
 
-None currently pending — all requested features as of 2026-09-09 are implemented and deployed.
+None currently pending for V0.7 — all its requirements are implemented and deployed.
+
+**NEXT VERSION: TMS V0.8 — Job Update + Survey.** Expected scope based on what V0.7 explicitly deferred: survey completion, survey date/time, inspecting staff, ILA/LOR issue dates, reminder dates, document receipt dates, assessment prep, insurer/insured approval, FSR prep/submission, mail sent, hard-copy dispatch, courier/POD, bill details, fee receipt — plus, longer-term, the Document Requirement Master / LOR Master / recommendation logic that Policy Type + Department + Peril + `item_type` are being captured to eventually feed (still not to be built until explicitly scoped).
 
 ## Known minor items not acted on
 
