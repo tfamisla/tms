@@ -128,6 +128,11 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
 .sp-body{flex:1;overflow-y:auto;padding:18px}
 .sp-section{margin-bottom:20px}
 .sp-section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);margin-bottom:10px}
+details.sp-section{border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:20px}
+details.sp-section summary{margin-bottom:0}
+details.sp-section[open] summary{margin-bottom:0}
+.progress-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;font-size:12px}
+.progress-grid strong{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);font-weight:600;margin-bottom:2px}
 .sp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .sp-field{display:flex;flex-direction:column;gap:3px}
 .sp-field label{font-size:10.5px;color:var(--text-sec);font-weight:500}
@@ -717,6 +722,132 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
   </div>
 </div>
 
+<!-- ── REMINDER HISTORY MODAL ── -->
+<div class="modal-overlay" id="reminderHistoryModal" hidden onclick="e=>e.target===this&&closeReminderHistory()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Reminder History — <span id="rh-job-id" class="mono" style="font-size:14px"></span></h2>
+      <button class="sp-close" onclick="closeReminderHistory()">✕</button>
+    </div>
+    <div class="modal-body">
+      <button type="button" class="btn-add-contact" onclick="openReminderForm()">+ Add Reminder</button>
+      <div id="reminderList"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeReminderHistory()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD/EDIT REMINDER MODAL ── -->
+<div class="modal-overlay" id="reminderFormModal" hidden onclick="e=>e.target===this&&closeReminderForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="rf-modal-title">Add Reminder</h2>
+      <button class="sp-close" onclick="closeReminderForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field">
+          <label>Reminder Date *</label>
+          <input id="rf-date" type="date">
+        </div>
+        <div class="form-field">
+          <label>Reminder Type / Reason *</label>
+          <select id="rf-type" onchange="document.getElementById('rf-type-other').hidden = this.value !== 'Other'">
+            <option value="Documents Pending">Documents Pending</option>
+            <option value="Assessment Approval Pending">Assessment Approval Pending</option>
+            <option value="Insurer Approval Pending">Insurer Approval Pending</option>
+            <option value="Insured Consent Pending">Insured Consent Pending</option>
+            <option value="Clarification Pending">Clarification Pending</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field" id="rf-type-other" hidden>
+          <label>Custom Reason</label>
+          <input id="rf-type-custom">
+        </div>
+        <div class="form-field">
+          <label>Mode</label>
+          <select id="rf-mode">
+            <option value="Email">Email</option>
+            <option value="Call">Call</option>
+            <option value="WhatsApp">WhatsApp</option>
+            <option value="Letter">Letter</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field full">
+          <label>Remarks</label>
+          <textarea id="rf-remarks" class="notes-area" rows="3"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitReminderForm()">Save Reminder</button>
+      <button class="btn-secondary" onclick="closeReminderForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DOCUMENT RECEIPT HISTORY MODAL ── -->
+<div class="modal-overlay" id="receiptHistoryModal" hidden onclick="e=>e.target===this&&closeReceiptHistory()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Document Receipt History — <span id="rc-job-id" class="mono" style="font-size:14px"></span></h2>
+      <button class="sp-close" onclick="closeReceiptHistory()">✕</button>
+    </div>
+    <div class="modal-body">
+      <button type="button" class="btn-add-contact" onclick="openReceiptForm()">+ Add Document Receipt</button>
+      <div id="receiptList"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeReceiptHistory()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD/EDIT DOCUMENT RECEIPT MODAL ── -->
+<div class="modal-overlay" id="receiptFormModal" hidden onclick="e=>e.target===this&&closeReceiptForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="rcf-modal-title">Add Document Receipt</h2>
+      <button class="sp-close" onclick="closeReceiptForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field">
+          <label>Receipt Date *</label>
+          <input id="rcf-date" type="date">
+        </div>
+        <div class="form-field">
+          <label>Receipt Mode</label>
+          <select id="rcf-mode">
+            <option value="Email">Email</option>
+            <option value="Courier">Courier</option>
+            <option value="WhatsApp">WhatsApp</option>
+            <option value="Hand">Hand</option>
+            <option value="Portal">Portal</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field full">
+          <label>Documents Received * (one per line)</label>
+          <textarea id="rcf-documents" class="notes-area" rows="4" placeholder="Claim Form&#10;Repair Estimate&#10;Purchase Invoice"></textarea>
+        </div>
+        <div class="form-field full">
+          <label>Remarks</label>
+          <textarea id="rcf-remarks" class="notes-area" rows="2"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitReceiptForm()">Save Receipt</button>
+      <button class="btn-secondary" onclick="closeReceiptForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // CONFIG — set your Worker URL after deploy
@@ -770,6 +901,10 @@ let BRANCHES = [];
 let SETTINGS = {};
 let surveyVisits = [];
 let currentSurveyJobId = null;
+let claimReminders = [];
+let editingReminderId = null;
+let claimReceipts = [];
+let editingReceiptId = null;
 let editingVisitId = null;
 
 const VISIT_REASONS = [
@@ -1154,6 +1289,7 @@ function openJob(id) {
 
   const body = document.getElementById('spBody');
   body.innerHTML = buildJobPanel(j);
+  toggleInsurerApprovalFields();
 
   document.getElementById('overlay').classList.add('open');
   document.getElementById('sidePanel').classList.add('open');
@@ -1286,19 +1422,186 @@ function buildJobPanel(j) {
     </div>
   </div>
 
-  <!-- Survey -->
+  <!-- Claim Progress -->
   <div class="sp-section">
-    <div class="sp-section-label">Survey</div>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
-      <span style="font-weight:600;font-size:13px">${surveyStatusBadge(j.survey_status).emoji} ${surveyStatusBadge(j.survey_status).label}</span>
-      <span style="font-size:12px;color:var(--text-faint)">Visits: ${j.survey_visit_count||0}</span>
+    <div class="sp-section-label">Claim Progress</div>
+    <div class="progress-grid">
+      <div><strong>Survey</strong><br>${surveyStatusBadge(j.survey_status).emoji} ${surveyStatusBadge(j.survey_status).label}${j.survey_visit_count?` (${j.survey_visit_count} visit${j.survey_visit_count!==1?'s':''})`:''}</div>
+      <div><strong>ILA</strong><br>${ilaLorLine(j.ila_required, j.ila_issued, j.ila_issue_date)}</div>
+      <div><strong>LOR</strong><br>${ilaLorLine(j.lor_required, j.lor_issued, j.lor_issue_date)}</div>
+      <div><strong>Documents</strong><br>${j.document_receipt_count||0} Receipt Batch${(j.document_receipt_count||0)!==1?'es':''}</div>
+      <div><strong>Last Reminder</strong><br>${j.last_reminder_date || '—'}</div>
+      <div><strong>Assessment</strong><br>${ASSESSMENT_STATUS_LABELS[j.assessment_status]||'Not Started'}</div>
+      <div><strong>Director Verification</strong><br>${DIRECTOR_VERIFICATION_LABELS[j.director_verification_status]||'Pending'}</div>
+      <div><strong>Insurer Approval</strong><br>${j.insurer_approval_required==='no'?'Not Required':j.insurer_approval_required==='to_be_decided'?'To Be Decided':(INSURER_APPROVAL_STATUS_LABELS[j.insurer_approval_status]||'Pending')}</div>
+      <div><strong>Insured Consent</strong><br>${INSURED_CONSENT_LABELS[j.insured_consent_status]||'Not Started'}</div>
+      <div><strong>FSR Preparation</strong><br>${FSR_PREP_LABELS[j.fsr_preparation_status]||'Not Started'}</div>
     </div>
-    ${j.last_survey_visit ? `<div style="font-size:12px;color:var(--text-sec);margin-bottom:10px">Last Visit: ${j.last_survey_visit.visit_date}${j.last_survey_visit.visit_time?' '+j.last_survey_visit.visit_time:''} — ${esc(j.last_survey_visit.reason)}</div>` : ''}
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
       <button type="button" class="btn-secondary" onclick="openSurveyHistory('${j.id}')">View Survey History</button>
       ${j.survey_status !== 'completed' ? `<button type="button" class="btn-secondary" onclick="markSurveyCompleted('${j.id}')">Mark Survey Completed</button>` : ''}
+      <button type="button" class="btn-secondary" onclick="openReminderHistory('${j.id}')">View Reminder History</button>
+      <button type="button" class="btn-secondary" onclick="openReceiptHistory('${j.id}')">View Document Receipt History</button>
     </div>
   </div>
+
+  <!-- ILA & LOR -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">ILA &amp; LOR</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="modal-subsection-label">Initial Loss Advice (ILA)</div>
+      <div class="sp-field"><label>ILA Required</label>
+        <select id="sp-f-ila-required">
+          <option value="to_be_decided" ${j.ila_required==='to_be_decided'?'selected':''}>To Be Decided</option>
+          <option value="yes" ${j.ila_required==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.ila_required==='no'?'selected':''}>No / Not Required</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>ILA Issued</label>
+        <select id="sp-f-ila-issued">
+          <option value="" ${!j.ila_issued?'selected':''}>—</option>
+          <option value="yes" ${j.ila_issued==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.ila_issued==='no'?'selected':''}>No</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>ILA Issue Date</label><input type="date" id="sp-f-ila-issue-date" value="${j.ila_issue_date||''}"></div>
+      <div class="sp-field sp-field-full"><label>ILA Remarks</label><input id="sp-f-ila-remarks" value="${esc(j.ila_remarks||'')}"></div>
+
+      <div class="modal-subsection-label">Letter of Requirement (LOR)</div>
+      <div class="sp-field"><label>LOR Required</label>
+        <select id="sp-f-lor-required">
+          <option value="to_be_decided" ${j.lor_required==='to_be_decided'?'selected':''}>To Be Decided</option>
+          <option value="yes" ${j.lor_required==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.lor_required==='no'?'selected':''}>No / Not Required</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>LOR Issued</label>
+        <select id="sp-f-lor-issued">
+          <option value="" ${!j.lor_issued?'selected':''}>—</option>
+          <option value="yes" ${j.lor_issued==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.lor_issued==='no'?'selected':''}>No</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>LOR Issue Date</label><input type="date" id="sp-f-lor-issue-date" value="${j.lor_issue_date||''}"></div>
+      <div class="sp-field sp-field-full"><label>LOR Remarks</label><input id="sp-f-lor-remarks" value="${esc(j.lor_remarks||'')}"></div>
+    </div>
+  </details>
+
+  <!-- Assessment -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">Assessment</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="sp-field"><label>Assessment Status</label>
+        <select id="sp-f-assessment-status">
+          <option value="not_started" ${j.assessment_status==='not_started'?'selected':''}>Not Started</option>
+          <option value="in_preparation" ${j.assessment_status==='in_preparation'?'selected':''}>In Preparation</option>
+          <option value="prepared" ${j.assessment_status==='prepared'?'selected':''}>Prepared</option>
+          <option value="revision_required" ${j.assessment_status==='revision_required'?'selected':''}>Revision Required</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>Assessment Preparation Date</label><input type="date" id="sp-f-assessment-date" value="${j.assessment_prepared_date||''}"></div>
+      <div class="sp-field"><label>Assessed Loss Amount (₹)</label><input id="sp-f-assessed-amount" inputmode="decimal" value="${esc(j.assessed_amount||'')}"></div>
+      <div class="sp-field sp-field-full"><label>Assessment Remarks</label><input id="sp-f-assessment-remarks" value="${esc(j.assessment_remarks||'')}"></div>
+    </div>
+  </details>
+
+  <!-- Approvals -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">Approvals</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="modal-subsection-label">Director Verification</div>
+      <div class="sp-field"><label>Verification Status</label>
+        <select id="sp-f-dv-status">
+          <option value="pending" ${j.director_verification_status==='pending'?'selected':''}>Pending</option>
+          <option value="approved" ${j.director_verification_status==='approved'?'selected':''}>Approved</option>
+          <option value="returned_for_revision" ${j.director_verification_status==='returned_for_revision'?'selected':''}>Returned for Revision</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>Verification Date</label><input type="date" id="sp-f-dv-date" value="${j.director_verification_date||''}"></div>
+      <div class="sp-field"><label>Verified By</label>
+        <select id="sp-f-dv-by">
+          <option value="">— Select Director —</option>
+          ${TEAM.filter(isDirector).map(m=>`<option value="${m.id}" ${j.director_verified_by===m.id?'selected':''}>${esc(m.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="sp-field sp-field-full"><label>Verification Remarks</label><input id="sp-f-dv-remarks" value="${esc(j.director_verification_remarks||'')}"></div>
+
+      <div class="modal-subsection-label">Insurer Approval</div>
+      <div class="sp-field"><label>Insurer Approval Required?</label>
+        <select id="sp-f-ia-required" onchange="toggleInsurerApprovalFields()">
+          <option value="to_be_decided" ${j.insurer_approval_required==='to_be_decided'?'selected':''}>To Be Decided</option>
+          <option value="yes" ${j.insurer_approval_required==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.insurer_approval_required==='no'?'selected':''}>No / Not Required</option>
+        </select>
+      </div>
+      <div></div>
+      <div class="sp-field" id="sp-ia-status-wrap"><label>Insurer Approval Status</label>
+        <select id="sp-f-ia-status">
+          <option value="" ${!j.insurer_approval_status?'selected':''}>—</option>
+          <option value="pending" ${j.insurer_approval_status==='pending'?'selected':''}>Pending</option>
+          <option value="approved" ${j.insurer_approval_status==='approved'?'selected':''}>Approved</option>
+          <option value="partially_approved" ${j.insurer_approval_status==='partially_approved'?'selected':''}>Partially Approved</option>
+          <option value="query" ${j.insurer_approval_status==='query'?'selected':''}>Query</option>
+          <option value="rejected" ${j.insurer_approval_status==='rejected'?'selected':''}>Rejected</option>
+        </select>
+      </div>
+      <div class="sp-field" id="sp-ia-date-wrap"><label>Insurer Approval Date</label><input type="date" id="sp-f-ia-date" value="${j.insurer_approval_date||''}"></div>
+      <div class="sp-field" id="sp-ia-amount-wrap"><label>Insurer Approved Amount (₹)</label><input id="sp-f-ia-amount" inputmode="decimal" value="${esc(j.insurer_approved_amount||'')}"></div>
+      <div class="sp-field sp-field-full" id="sp-ia-remarks-wrap"><label>Insurer Approval Remarks</label><input id="sp-f-ia-remarks" value="${esc(j.insurer_approval_remarks||'')}"></div>
+      <div class="sp-field-full" id="sp-ia-not-required-note" style="font-size:12px;color:var(--text-faint)${j.insurer_approval_required==='yes'?';display:none':''}">
+        ${j.insurer_approval_required==='no' ? 'Insurer Approval: Not Required.' : j.insurer_approval_required==='to_be_decided' ? 'Insurer Approval Requirement: To Be Decided.' : ''}
+      </div>
+
+      <div class="modal-subsection-label">Insured Consent</div>
+      <div class="sp-field"><label>Consent Status</label>
+        <select id="sp-f-ic-status">
+          <option value="not_started" ${j.insured_consent_status==='not_started'?'selected':''}>Not Started</option>
+          <option value="pending" ${j.insured_consent_status==='pending'?'selected':''}>Pending</option>
+          <option value="accepted" ${j.insured_consent_status==='accepted'?'selected':''}>Accepted</option>
+          <option value="disputed" ${j.insured_consent_status==='disputed'?'selected':''}>Disputed</option>
+          <option value="revised_consent_awaited" ${j.insured_consent_status==='revised_consent_awaited'?'selected':''}>Revised Consent Awaited</option>
+          <option value="declined" ${j.insured_consent_status==='declined'?'selected':''}>Declined</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>Consent Date</label><input type="date" id="sp-f-ic-date" value="${j.insured_consent_date||''}"></div>
+      <div class="sp-field"><label>Agreed Amount (₹)</label><input id="sp-f-ic-amount" inputmode="decimal" value="${esc(j.insured_agreed_amount||'')}"></div>
+      <div class="sp-field sp-field-full"><label>Consent Remarks</label><input id="sp-f-ic-remarks" value="${esc(j.insured_consent_remarks||'')}"></div>
+      ${j.insurer_approval_required==='yes' && !['approved','partially_approved'].includes(j.insurer_approval_status) ? '<div class="sp-field-full" style="font-size:12px;color:var(--amber)">⚠ Insurer Approval is still pending.</div>' : ''}
+    </div>
+  </details>
+
+  <!-- Reminder Frequency -->
+  <div class="sp-section">
+    <div class="sp-section-label">Reminder Frequency</div>
+    <div class="sp-grid">
+      <div class="sp-field"><label>Frequency</label>
+        <select id="sp-f-reminder-frequency" onchange="document.getElementById('sp-reminder-custom-wrap').hidden = this.value !== 'custom'">
+          ${Object.entries(REMINDER_FREQUENCY_LABELS).map(([v,l])=>`<option value="${v}" ${j.reminder_frequency===v?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="sp-field" id="sp-reminder-custom-wrap" ${j.reminder_frequency!=='custom'?'hidden':''}>
+        <label>Custom Interval (days)</label>
+        <input id="sp-f-reminder-frequency-custom" value="${esc(j.reminder_frequency_custom_days||'')}">
+      </div>
+    </div>
+  </div>
+
+  <!-- FSR Preparation -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">FSR Preparation</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="sp-field"><label>FSR Preparation Status</label>
+        <select id="sp-f-fsr-status">
+          <option value="not_started" ${j.fsr_preparation_status==='not_started'?'selected':''}>Not Started</option>
+          <option value="in_preparation" ${j.fsr_preparation_status==='in_preparation'?'selected':''}>In Preparation</option>
+          <option value="ready" ${j.fsr_preparation_status==='ready'?'selected':''}>Ready</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>FSR Preparation Date</label><input type="date" id="sp-f-fsr-date" value="${j.fsr_preparation_date||''}"></div>
+      <div class="sp-field sp-field-full"><label>Remarks</label><input id="sp-f-fsr-remarks" value="${esc(j.fsr_preparation_remarks||'')}"></div>
+      ${fsrReadinessWarning(j) ? `<div class="sp-field-full" style="font-size:12px;color:var(--amber)">⚠ Not yet ready: ${esc(fsrReadinessWarning(j))}</div>` : '<div class="sp-field-full" style="font-size:12px;color:var(--green)">✓ Prerequisites met — FSR can proceed.</div>'}
+    </div>
+  </details>
 
   <!-- Documents -->
   <div class="sp-section">
@@ -1448,6 +1751,80 @@ async function saveJob() {
   updates.survey_date   = document.getElementById('sp-f-survey')?.value;
   updates.appointment_date = document.getElementById('sp-f-appt')?.value;
   updates.appointment_confirmed = document.getElementById('sp-f-appt-conf')?.value === '1';
+
+  // ── Claim Milestones (V0.9) — client-side mirror of server validation ──
+  const gv = id => document.getElementById(id)?.value ?? '';
+  if (gv('sp-f-ila-issued') === 'yes' && !gv('sp-f-ila-issue-date')) {
+    alert('ILA Issue Date is required when ILA Issued is Yes.'); return;
+  }
+  if (gv('sp-f-lor-issued') === 'yes' && !gv('sp-f-lor-issue-date')) {
+    alert('LOR Issue Date is required when LOR Issued is Yes.'); return;
+  }
+  if (gv('sp-f-dv-status') === 'approved' && (!gv('sp-f-dv-date') || !gv('sp-f-dv-by'))) {
+    alert('Director Verification Date and Verified By are required when status is Approved.'); return;
+  }
+  if (['approved','partially_approved'].includes(gv('sp-f-ia-status')) && !gv('sp-f-ia-date')) {
+    alert('Insurer Approval Date is required when status is Approved or Partially Approved.'); return;
+  }
+  if (gv('sp-f-ic-status') === 'accepted' && !gv('sp-f-ic-date')) {
+    alert('Insured Consent Date is required when status is Accepted.'); return;
+  }
+  for (const [id, label] of [['sp-f-assessed-amount','Assessed Loss Amount'],['sp-f-ia-amount','Insurer Approved Amount'],['sp-f-ic-amount','Insured Agreed Amount']]) {
+    const v = gv(id);
+    if (v && (isNaN(Number(v.replace(/,/g,''))) || Number(v.replace(/,/g,'')) < 0)) {
+      alert(`${label} must be a non-negative number.`); return;
+    }
+  }
+
+  const MILESTONE_FIELD_MAP = [
+    ['sp-f-ila-required', 'ila_required', 'ILA Required', REQUIRED_LABELS],
+    ['sp-f-ila-issued', 'ila_issued', 'ILA Issued', {yes:'Yes',no:'No'}],
+    ['sp-f-ila-issue-date', 'ila_issue_date', 'ILA Issue Date'],
+    ['sp-f-ila-remarks', 'ila_remarks', 'ILA Remarks'],
+    ['sp-f-lor-required', 'lor_required', 'LOR Required', REQUIRED_LABELS],
+    ['sp-f-lor-issued', 'lor_issued', 'LOR Issued', {yes:'Yes',no:'No'}],
+    ['sp-f-lor-issue-date', 'lor_issue_date', 'LOR Issue Date'],
+    ['sp-f-lor-remarks', 'lor_remarks', 'LOR Remarks'],
+    ['sp-f-reminder-frequency', 'reminder_frequency', 'Reminder Frequency', REMINDER_FREQUENCY_LABELS],
+    ['sp-f-reminder-frequency-custom', 'reminder_frequency_custom_days', 'Reminder Frequency (custom days)'],
+    ['sp-f-assessment-status', 'assessment_status', 'Assessment Status', ASSESSMENT_STATUS_LABELS],
+    ['sp-f-assessment-date', 'assessment_prepared_date', 'Assessment Preparation Date'],
+    ['sp-f-assessed-amount', 'assessed_amount', 'Assessed Loss Amount'],
+    ['sp-f-assessment-remarks', 'assessment_remarks', 'Assessment Remarks'],
+    ['sp-f-dv-status', 'director_verification_status', 'Director Verification Status', DIRECTOR_VERIFICATION_LABELS],
+    ['sp-f-dv-date', 'director_verification_date', 'Director Verification Date'],
+    ['sp-f-dv-by', 'director_verified_by', 'Verified By', Object.fromEntries(TEAM.map(m=>[m.id,m.name]))],
+    ['sp-f-dv-remarks', 'director_verification_remarks', 'Director Verification Remarks'],
+    ['sp-f-ia-required', 'insurer_approval_required', 'Insurer Approval Required', REQUIRED_LABELS],
+    ['sp-f-ia-status', 'insurer_approval_status', 'Insurer Approval Status', INSURER_APPROVAL_STATUS_LABELS],
+    ['sp-f-ia-date', 'insurer_approval_date', 'Insurer Approval Date'],
+    ['sp-f-ia-amount', 'insurer_approved_amount', 'Insurer Approved Amount'],
+    ['sp-f-ia-remarks', 'insurer_approval_remarks', 'Insurer Approval Remarks'],
+    ['sp-f-ic-status', 'insured_consent_status', 'Insured Consent Status', INSURED_CONSENT_LABELS],
+    ['sp-f-ic-date', 'insured_consent_date', 'Insured Consent Date'],
+    ['sp-f-ic-amount', 'insured_agreed_amount', 'Insured Agreed Amount'],
+    ['sp-f-ic-remarks', 'insured_consent_remarks', 'Insured Consent Remarks'],
+    ['sp-f-fsr-status', 'fsr_preparation_status', 'FSR Preparation Status', FSR_PREP_LABELS],
+    ['sp-f-fsr-date', 'fsr_preparation_date', 'FSR Preparation Date'],
+    ['sp-f-fsr-remarks', 'fsr_preparation_remarks', 'FSR Preparation Remarks'],
+  ];
+  for (const [domId, key, label, valueLabels] of MILESTONE_FIELD_MAP) {
+    const el = document.getElementById(domId);
+    if (!el) continue;
+    const val = el.value;
+    updates[key] = val;
+    const oldVal = j[key] || '';
+    if (val === oldVal) continue;
+    const disp = v => (valueLabels ? (valueLabels[v] || v || '—') : (v || '—'));
+    // Wording called out explicitly by the spec for these two transitions.
+    if (key === 'director_verification_status' && val === 'returned_for_revision') {
+      actEntries.push({ text: `Assessment returned for revision by ${teamMember(actor)?.name || actor}.`, ts: Date.now(), actor });
+    } else if (key === 'insurer_approval_required' && val === 'no') {
+      actEntries.push({ text: `Insurer Approval marked Not Required by ${teamMember(actor)?.name || actor}.`, ts: Date.now(), actor });
+    } else {
+      actEntries.push({ text: `${teamMember(actor)?.name || actor} changed ${label} from ${disp(oldVal)} to ${disp(val)}.`, ts: Date.now(), actor });
+    }
+  }
 
   if (actEntries.length === 0) actEntries.push({text:'Job updated', ts:Date.now(), actor});
 
@@ -1880,6 +2257,51 @@ function surveyStatusBadge(status) {
   return map[status] || map.not_surveyed;
 }
 
+// ── CLAIM MILESTONES (V0.9) ─────────────────────────────────────
+const REQUIRED_LABELS = { yes: 'Required', no: 'Not Required', to_be_decided: 'To Be Decided' };
+const ASSESSMENT_STATUS_LABELS = { not_started: 'Not Started', in_preparation: 'In Preparation', prepared: 'Prepared', revision_required: 'Revision Required' };
+const DIRECTOR_VERIFICATION_LABELS = { pending: 'Pending', approved: 'Approved', returned_for_revision: 'Returned for Revision' };
+const INSURER_APPROVAL_STATUS_LABELS = { pending: 'Pending', approved: 'Approved', partially_approved: 'Partially Approved', query: 'Query', rejected: 'Rejected' };
+const INSURED_CONSENT_LABELS = { not_started: 'Not Started', pending: 'Pending', accepted: 'Accepted', disputed: 'Disputed', revised_consent_awaited: 'Revised Consent Awaited', declined: 'Declined' };
+const FSR_PREP_LABELS = { not_started: 'Not Started', in_preparation: 'In Preparation', ready: 'Ready' };
+const REMINDER_FREQUENCY_LABELS = { none: 'None', daily: 'Daily', every_3_days: 'Every 3 Days', weekly: 'Weekly', fortnightly: 'Fortnightly', monthly: 'Monthly', custom: 'Custom' };
+const REMINDER_TYPES = ['Documents Pending', 'Assessment Approval Pending', 'Insurer Approval Pending', 'Insured Consent Pending', 'Clarification Pending', 'Other'];
+const RECEIPT_MODES = ['Email', 'Courier', 'WhatsApp', 'Hand', 'Portal', 'Other'];
+
+function ilaLorLine(required, issued, date) {
+  if (required === 'no') return 'Not Required';
+  if (required === 'to_be_decided') return 'To Be Decided';
+  if (issued === 'yes') return `Issued${date ? ' — ' + date : ''}`;
+  return 'Pending';
+}
+
+function toggleInsurerApprovalFields() {
+  const required = document.getElementById('sp-f-ia-required').value;
+  const show = required === 'yes';
+  ['sp-ia-status-wrap', 'sp-ia-date-wrap', 'sp-ia-amount-wrap', 'sp-ia-remarks-wrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? '' : 'none';
+  });
+  const note = document.getElementById('sp-ia-not-required-note');
+  if (note) {
+    note.style.display = show ? 'none' : '';
+    note.textContent = required === 'no' ? 'Insurer Approval: Not Required.'
+      : required === 'to_be_decided' ? 'Insurer Approval Requirement: To Be Decided.' : '';
+  }
+}
+
+function fsrReadinessWarning(j) {
+  const missing = [];
+  if (j.assessment_status !== 'prepared') missing.push('Assessment not yet Prepared');
+  if (j.director_verification_status !== 'approved') missing.push('Director Verification not yet Approved');
+  if (j.insurer_approval_required === 'yes' && !['approved', 'partially_approved'].includes(j.insurer_approval_status)) {
+    missing.push('Insurer Approval not yet completed');
+  }
+  if (j.insurer_approval_required === 'to_be_decided') missing.push('Insurer Approval requirement still To Be Decided');
+  if (j.insured_consent_status !== 'accepted') missing.push('Insured Consent not yet Accepted');
+  return missing.length ? missing.join('; ') : null;
+}
+
 // Inspecting-staff names are hidden from non-admins when the admin has
 // set Inspection Staff Visibility to Hidden. The server already strips
 // inspected_by_ids from the API response in that case (enforced there,
@@ -2003,6 +2425,144 @@ async function updateInspectionVisibility(value) {
     SETTINGS.inspection_staff_visibility = value;
   } catch(e) {
     alert('Error updating setting: ' + e.message);
+  }
+}
+
+// ── REMINDERS (V0.9) ─────────────────────────────────────────
+async function openReminderHistory(jobId) {
+  currentSurveyJobId = jobId;
+  document.getElementById('rh-job-id').textContent = jobId;
+  document.getElementById('reminderHistoryModal').hidden = false;
+  document.getElementById('reminderList').innerHTML = '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">Loading…</div>';
+  try {
+    claimReminders = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/reminders');
+  } catch(e) {
+    claimReminders = [];
+  }
+  renderReminderList();
+}
+function closeReminderHistory() { document.getElementById('reminderHistoryModal').hidden = true; }
+
+function renderReminderList() {
+  document.getElementById('reminderList').innerHTML = claimReminders.length === 0
+    ? '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">No reminders recorded yet.</div>'
+    : [...claimReminders].reverse().map(r => `
+      <div class="act-row" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px" onclick="openReminderForm('${r.id}')" title="Click to edit">
+        <div style="display:flex;justify-content:space-between;gap:10px;font-weight:600;font-size:13px">
+          <span>${esc(r.reminder_type)}${r.mode ? ' — ' + esc(r.mode) : ''}</span>
+          <span class="mono" style="color:var(--text-faint);font-weight:400;font-size:11px;white-space:nowrap">${r.reminder_date}</span>
+        </div>
+        ${r.remarks ? `<div style="font-size:12px;color:var(--text-sec)">${esc(r.remarks)}</div>` : ''}
+      </div>`).join('');
+}
+
+function openReminderForm(reminderId) {
+  editingReminderId = reminderId || null;
+  const r = reminderId ? claimReminders.find(x => x.id === reminderId) : null;
+  document.getElementById('rf-modal-title').textContent = r ? 'Edit Reminder' : 'Add Reminder';
+  document.getElementById('rf-date').value = r ? r.reminder_date : '';
+  const knownType = r ? (REMINDER_TYPES.includes(r.reminder_type) ? r.reminder_type : 'Other') : 'Documents Pending';
+  document.getElementById('rf-type').value = knownType;
+  document.getElementById('rf-type-other').hidden = knownType !== 'Other';
+  document.getElementById('rf-type-custom').value = (r && knownType === 'Other') ? r.reminder_type : '';
+  document.getElementById('rf-mode').value = r ? (r.mode || 'Email') : 'Email';
+  document.getElementById('rf-remarks').value = r ? (r.remarks || '') : '';
+  document.getElementById('reminderFormModal').hidden = false;
+}
+function closeReminderForm() { document.getElementById('reminderFormModal').hidden = true; }
+
+async function submitReminderForm() {
+  const date = document.getElementById('rf-date').value;
+  if (!date) { alert('Reminder Date is required.'); return; }
+  let type = document.getElementById('rf-type').value;
+  if (type === 'Other') {
+    type = document.getElementById('rf-type-custom').value.trim();
+    if (!type) { alert('Please enter a custom reason.'); return; }
+  }
+  const body = {
+    reminder_date: date, reminder_type: type,
+    mode: document.getElementById('rf-mode').value,
+    remarks: document.getElementById('rf-remarks').value.trim(),
+  };
+  try {
+    if (editingReminderId) {
+      await apiPatch('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/reminders/' + encodeURIComponent(editingReminderId), body);
+    } else {
+      await apiPost('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/reminders', body);
+    }
+    closeReminderForm();
+    claimReminders = await apiGet('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/reminders');
+    renderReminderList();
+    fetchAll();
+  } catch(e) {
+    alert('Error saving reminder: ' + e.message);
+  }
+}
+
+// ── DOCUMENT RECEIPTS (V0.9) ─────────────────────────────────
+async function openReceiptHistory(jobId) {
+  currentSurveyJobId = jobId;
+  document.getElementById('rc-job-id').textContent = jobId;
+  document.getElementById('receiptHistoryModal').hidden = false;
+  document.getElementById('receiptList').innerHTML = '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">Loading…</div>';
+  try {
+    claimReceipts = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/document-receipts');
+  } catch(e) {
+    claimReceipts = [];
+  }
+  renderReceiptList();
+}
+function closeReceiptHistory() { document.getElementById('receiptHistoryModal').hidden = true; }
+
+function renderReceiptList() {
+  document.getElementById('receiptList').innerHTML = claimReceipts.length === 0
+    ? '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">No document receipts recorded yet.</div>'
+    : [...claimReceipts].reverse().map(r => `
+      <div class="act-row" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px" onclick="openReceiptForm('${r.id}')" title="Click to edit">
+        <div style="display:flex;justify-content:space-between;gap:10px;font-weight:600;font-size:13px">
+          <span>${r.receipt_date}</span>
+          <span style="color:var(--text-faint);font-weight:400;font-size:11px">Mode: ${esc(r.receipt_mode||'—')}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-sec)">${(r.documents_received||[]).map(d=>'• '+esc(d)).join('<br>')}</div>
+        ${r.remarks ? `<div style="font-size:12px;color:var(--text-faint)">${esc(r.remarks)}</div>` : ''}
+      </div>`).join('');
+}
+
+function openReceiptForm(receiptId) {
+  editingReceiptId = receiptId || null;
+  const r = receiptId ? claimReceipts.find(x => x.id === receiptId) : null;
+  document.getElementById('rcf-modal-title').textContent = r ? 'Edit Document Receipt' : 'Add Document Receipt';
+  document.getElementById('rcf-date').value = r ? r.receipt_date : '';
+  document.getElementById('rcf-mode').value = r ? (r.receipt_mode || 'Email') : 'Email';
+  document.getElementById('rcf-documents').value = r ? (r.documents_received||[]).join('\n') : '';
+  document.getElementById('rcf-remarks').value = r ? (r.remarks || '') : '';
+  document.getElementById('receiptFormModal').hidden = false;
+}
+function closeReceiptForm() { document.getElementById('receiptFormModal').hidden = true; }
+
+async function submitReceiptForm() {
+  const date = document.getElementById('rcf-date').value;
+  if (!date) { alert('Receipt Date is required.'); return; }
+  const documents_received = document.getElementById('rcf-documents').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (documents_received.length === 0) { alert('At least one received document is required.'); return; }
+  const body = {
+    receipt_date: date,
+    receipt_mode: document.getElementById('rcf-mode').value,
+    documents_received,
+    remarks: document.getElementById('rcf-remarks').value.trim(),
+  };
+  try {
+    if (editingReceiptId) {
+      await apiPatch('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/document-receipts/' + encodeURIComponent(editingReceiptId), body);
+    } else {
+      await apiPost('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/document-receipts', body);
+    }
+    closeReceiptForm();
+    claimReceipts = await apiGet('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/document-receipts');
+    renderReceiptList();
+    fetchAll();
+  } catch(e) {
+    alert('Error saving receipt: ' + e.message);
   }
 }
 </script>

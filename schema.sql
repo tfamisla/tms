@@ -59,6 +59,37 @@ CREATE TABLE IF NOT EXISTS jobs (
   notes                TEXT    DEFAULT '',
   docs                 TEXT    NOT NULL DEFAULT '{}',   -- JSON object of doc flags
   activity             TEXT    NOT NULL DEFAULT '[]',   -- JSON array of {text,ts,actor}
+  -- ── Claim Milestones (V0.9) ──
+  ila_required         TEXT    NOT NULL DEFAULT 'to_be_decided',  -- 'yes'|'no'|'to_be_decided'
+  ila_issued           TEXT    DEFAULT '',                        -- ''|'yes'|'no'
+  ila_issue_date       TEXT    DEFAULT '',
+  ila_remarks          TEXT    DEFAULT '',
+  lor_required         TEXT    NOT NULL DEFAULT 'to_be_decided',
+  lor_issued           TEXT    DEFAULT '',
+  lor_issue_date       TEXT    DEFAULT '',
+  lor_remarks          TEXT    DEFAULT '',
+  reminder_frequency          TEXT DEFAULT 'none',  -- 'none'|'daily'|'every_3_days'|'weekly'|'fortnightly'|'monthly'|'custom'
+  reminder_frequency_custom_days TEXT DEFAULT '',
+  assessment_status    TEXT    NOT NULL DEFAULT 'not_started',  -- 'not_started'|'in_preparation'|'prepared'|'revision_required'
+  assessment_prepared_date TEXT DEFAULT '',
+  assessed_amount      TEXT    DEFAULT '',   -- Assessed Loss Amount (new; estimated_loss/gross_loss/claim_amount already existed and are reused)
+  assessment_remarks   TEXT    DEFAULT '',
+  director_verification_status TEXT NOT NULL DEFAULT 'pending',  -- 'pending'|'approved'|'returned_for_revision'
+  director_verification_date   TEXT DEFAULT '',
+  director_verified_by TEXT    DEFAULT '',   -- staff id, must have a Director role
+  director_verification_remarks TEXT DEFAULT '',
+  insurer_approval_required TEXT NOT NULL DEFAULT 'to_be_decided',  -- 'yes'|'no'|'to_be_decided'
+  insurer_approval_status   TEXT DEFAULT '',  -- 'pending'|'approved'|'partially_approved'|'query'|'rejected'
+  insurer_approval_date     TEXT DEFAULT '',
+  insurer_approved_amount   TEXT DEFAULT '',
+  insurer_approval_remarks  TEXT DEFAULT '',
+  insured_consent_status TEXT NOT NULL DEFAULT 'not_started',  -- 'not_started'|'pending'|'accepted'|'disputed'|'revised_consent_awaited'|'declined'
+  insured_consent_date   TEXT DEFAULT '',
+  insured_agreed_amount  TEXT DEFAULT '',
+  insured_consent_remarks TEXT DEFAULT '',
+  fsr_preparation_status TEXT NOT NULL DEFAULT 'not_started',  -- 'not_started'|'in_preparation'|'ready'
+  fsr_preparation_date   TEXT DEFAULT '',
+  fsr_preparation_remarks TEXT DEFAULT '',
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -142,3 +173,36 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 INSERT OR IGNORE INTO settings (key, value) VALUES ('inspection_staff_visibility', 'visible');
+
+-- ── Claim Reminders (V0.9) ─────────────────────────────────────
+-- One job -> many reminder events, unlimited.
+CREATE TABLE IF NOT EXISTS claim_reminders (
+  id            TEXT    PRIMARY KEY,
+  job_id        TEXT    NOT NULL,
+  reminder_date TEXT    NOT NULL,
+  reminder_type TEXT    NOT NULL,   -- preset reason or custom "Other" text
+  mode          TEXT    DEFAULT '',   -- 'Email'|'Call'|'WhatsApp'|'Letter'|'Other'
+  remarks       TEXT    DEFAULT '',
+  created_by    TEXT    DEFAULT '',
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_claim_reminders_job ON claim_reminders (job_id);
+
+-- ── Document Receipt Events (V0.9) ──────────────────────────────
+-- One job -> many receipt batches, unlimited. Not the final document-
+-- compliance checklist (that's a later version) — just a received-batch log.
+CREATE TABLE IF NOT EXISTS document_receipt_events (
+  id                 TEXT    PRIMARY KEY,
+  job_id             TEXT    NOT NULL,
+  receipt_date       TEXT    NOT NULL,
+  receipt_mode       TEXT    DEFAULT '',   -- 'Email'|'Courier'|'WhatsApp'|'Hand'|'Portal'|'Other'
+  documents_received TEXT    NOT NULL DEFAULT '[]',  -- JSON array of document name strings
+  remarks            TEXT    DEFAULT '',
+  created_by         TEXT    DEFAULT '',
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_receipt_events_job ON document_receipt_events (job_id);

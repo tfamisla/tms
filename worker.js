@@ -26,10 +26,27 @@ const JOB_TEXT_FIELDS = [
   'date_loss', 'date_intimation',
 ];
 
+// Claim milestone fields (V0.9) — updatable via PATCH but deliberately kept
+// out of JOB_TEXT_FIELDS/createJob's default-to-'' loop, since each has a
+// meaningful non-empty SQL default (e.g. 'to_be_decided', 'not_started');
+// a brand-new job should get those defaults, not blank strings.
+const MILESTONE_FIELDS = [
+  'ila_required', 'ila_issued', 'ila_issue_date', 'ila_remarks',
+  'lor_required', 'lor_issued', 'lor_issue_date', 'lor_remarks',
+  'reminder_frequency', 'reminder_frequency_custom_days',
+  'assessment_status', 'assessment_prepared_date', 'assessed_amount', 'assessment_remarks',
+  'director_verification_status', 'director_verification_date', 'director_verified_by', 'director_verification_remarks',
+  'insurer_approval_required', 'insurer_approval_status', 'insurer_approval_date',
+  'insurer_approved_amount', 'insurer_approval_remarks',
+  'insured_consent_status', 'insured_consent_date', 'insured_agreed_amount', 'insured_consent_remarks',
+  'fsr_preparation_status', 'fsr_preparation_date', 'fsr_preparation_remarks',
+];
+
 const UPDATABLE_FIELDS = [
   'title', ...JOB_TEXT_FIELDS, 'survey_date', 'survey_status',
   'appointment_date', 'appointment_confirmed', 'stage',
   'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'contacts',
+  ...MILESTONE_FIELDS,
   'notes', 'docs',
 ];
 
@@ -117,13 +134,72 @@ function validatePolicyPeriod(from, to) {
   }
 }
 
+function isNonNegativeNumber(v) {
+  if (!v) return true; // blank is allowed — TFAM often has incomplete info
+  const n = Number(String(v).replace(/,/g, ''));
+  return !isNaN(n) && n >= 0;
+}
+
+// Cross-field milestone rules (V0.9). `body` may be a partial PATCH, so each
+// check falls back to the existing row's value for fields not being changed.
+async function validateMilestones(db, existing, body) {
+  const eff = field => (body[field] !== undefined ? body[field] : existing[field]);
+
+  if (eff('ila_issued') === 'yes' && !eff('ila_issue_date')) {
+    throw new Error('ILA Issue Date is required when ILA Issued is Yes');
+  }
+  if (eff('lor_issued') === 'yes' && !eff('lor_issue_date')) {
+    throw new Error('LOR Issue Date is required when LOR Issued is Yes');
+  }
+
+  const dvStatus = eff('director_verification_status');
+  if (dvStatus === 'approved') {
+    if (!eff('director_verification_date')) throw new Error('Director Verification Date is required when status is Approved');
+    if (!eff('director_verified_by')) throw new Error('Verified By is required when status is Approved');
+  }
+  const dvBy = eff('director_verified_by');
+  if (dvBy) {
+    const staffRow = await db.prepare('SELECT role FROM staff WHERE id = ?').bind(dvBy).first();
+    if (!staffRow) throw new Error('Verified By staff not found');
+    if (!/director/i.test(staffRow.role || '')) throw new Error('Verified By must be a Director-role staff member');
+  }
+
+  const iaStatus = eff('insurer_approval_status');
+  if ((iaStatus === 'approved' || iaStatus === 'partially_approved') && !eff('insurer_approval_date')) {
+    throw new Error('Insurer Approval Date is required when status is Approved or Partially Approved');
+  }
+
+  if (eff('insured_consent_status') === 'accepted' && !eff('insured_consent_date')) {
+    throw new Error('Insured Consent Date is required when status is Accepted');
+  }
+
+  for (const [field, label] of [
+    ['assessed_amount', 'Assessed Loss Amount'],
+    ['insurer_approved_amount', 'Insurer Approved Amount'],
+    ['insured_agreed_amount', 'Insured Agreed Amount'],
+  ]) {
+    if (!isNonNegativeNumber(eff(field))) throw new Error(`${label} must be a non-negative number`);
+  }
+}
+
 async function listJobs(db) {
   const { results } = await db.prepare('SELECT * FROM jobs ORDER BY updated_at DESC').all();
   const { results: visits } = await db.prepare(
     'SELECT job_id, visit_date, visit_time, reason, created_at FROM survey_visits ORDER BY created_at ASC'
   ).all();
+  const { results: reminders } = await db.prepare(
+    'SELECT job_id, reminder_date, created_at FROM claim_reminders ORDER BY created_at ASC'
+  ).all();
+  const { results: receipts } = await db.prepare(
+    'SELECT job_id FROM document_receipt_events'
+  ).all();
+
   const byJob = {};
   for (const v of visits) (byJob[v.job_id] ||= []).push(v);
+  const remByJob = {};
+  for (const r of reminders) (remByJob[r.job_id] ||= []).push(r);
+  const recCountByJob = {};
+  for (const r of receipts) recCountByJob[r.job_id] = (recCountByJob[r.job_id] || 0) + 1;
 
   return results.map(row => {
     const job = rowToJob(row);
@@ -131,6 +207,13 @@ async function listJobs(db) {
     job.survey_visit_count = jobVisits.length;
     const last = jobVisits[jobVisits.length - 1];
     job.last_survey_visit = last ? { visit_date: last.visit_date, visit_time: last.visit_time, reason: last.reason } : null;
+
+    const jobReminders = remByJob[job.id] || [];
+    job.reminder_count = jobReminders.length;
+    const lastRem = jobReminders[jobReminders.length - 1];
+    job.last_reminder_date = lastRem ? lastRem.reminder_date : null;
+
+    job.document_receipt_count = recCountByJob[job.id] || 0;
     return job;
   });
 }
@@ -201,6 +284,7 @@ async function updateJob(db, id, body) {
   const effectiveTo   = body.policy_period_to   !== undefined ? body.policy_period_to   : existing.policy_period_to;
   validatePolicyPeriod(effectiveFrom, effectiveTo);
   await validateJobAssignments(db, body);
+  await validateMilestones(db, existing, body);
 
   const sets = [];
   const values = [];
@@ -367,6 +451,152 @@ async function updateSurveyVisit(db, jobId, visitId, body, user) {
 
   const updated = await db.prepare('SELECT * FROM survey_visits WHERE id = ?').bind(visitId).first();
   return rowToVisit(updated, true);
+}
+
+const EVENT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// ── CLAIM REMINDERS (V0.9) ──────────────────────────────────────
+async function listReminders(db, jobId) {
+  const { results } = await db.prepare(
+    'SELECT * FROM claim_reminders WHERE job_id = ? ORDER BY created_at ASC'
+  ).bind(jobId).all();
+  return results;
+}
+
+async function createReminder(db, jobId, body, user) {
+  const job = await db.prepare('SELECT id FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) throw new Error('job not found');
+
+  const reminderDate = (body.reminder_date || '').trim();
+  const reminderType = (body.reminder_type || '').trim();
+  const mode = (body.mode || '').trim();
+  const remarks = (body.remarks || '').trim();
+
+  if (!EVENT_DATE_RE.test(reminderDate)) throw new Error('A valid reminder date (YYYY-MM-DD) is required');
+  if (!reminderType) throw new Error('Reminder type/reason is required');
+
+  const now = Date.now();
+  const id = `RM-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO claim_reminders (id, job_id, reminder_date, reminder_type, mode, remarks, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, reminderDate, reminderType, mode, remarks, user.id, now, now).run();
+
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} added reminder — ${reminderType}${mode ? ' — ' + mode : ''} — ${reminderDate}.`,
+    ts: now, actor: user.id,
+  }]);
+
+  return { id, job_id: jobId, reminder_date: reminderDate, reminder_type: reminderType, mode, remarks,
+    created_by: user.id, created_at: now, updated_at: now };
+}
+
+async function updateReminder(db, jobId, reminderId, body, user) {
+  const existing = await db.prepare('SELECT * FROM claim_reminders WHERE id = ? AND job_id = ?')
+    .bind(reminderId, jobId).first();
+  if (!existing) throw new Error('reminder not found');
+
+  const next = {
+    reminder_date: body.reminder_date !== undefined ? String(body.reminder_date).trim() : existing.reminder_date,
+    reminder_type: body.reminder_type !== undefined ? String(body.reminder_type).trim() : existing.reminder_type,
+    mode: body.mode !== undefined ? String(body.mode).trim() : existing.mode,
+    remarks: body.remarks !== undefined ? String(body.remarks).trim() : existing.remarks,
+  };
+  if (!EVENT_DATE_RE.test(next.reminder_date)) throw new Error('A valid reminder date (YYYY-MM-DD) is required');
+  if (!next.reminder_type) throw new Error('Reminder type/reason is required');
+
+  const changeLines = [];
+  if (next.reminder_date !== existing.reminder_date) changeLines.push(`date from ${existing.reminder_date} to ${next.reminder_date}`);
+  if (next.reminder_type !== existing.reminder_type) changeLines.push(`type from "${existing.reminder_type}" to "${next.reminder_type}"`);
+  if (next.mode !== (existing.mode || '')) changeLines.push(`mode from "${existing.mode || '—'}" to "${next.mode || '—'}"`);
+  if (next.remarks !== (existing.remarks || '')) changeLines.push('remarks');
+
+  const now = Date.now();
+  await db.prepare('UPDATE claim_reminders SET reminder_date=?, reminder_type=?, mode=?, remarks=?, updated_at=? WHERE id = ?')
+    .bind(next.reminder_date, next.reminder_type, next.mode, next.remarks, now, reminderId).run();
+
+  if (changeLines.length > 0) {
+    await appendJobActivity(db, jobId, [{ text: `${user.id} updated reminder ${changeLines.join('; ')}.`, ts: now, actor: user.id }]);
+  }
+
+  return db.prepare('SELECT * FROM claim_reminders WHERE id = ?').bind(reminderId).first();
+}
+
+// ── DOCUMENT RECEIPT EVENTS (V0.9) ──────────────────────────────
+function rowToReceipt(row) {
+  const r = { ...row };
+  try { r.documents_received = JSON.parse(row.documents_received); } catch { r.documents_received = []; }
+  return r;
+}
+
+async function listDocumentReceipts(db, jobId) {
+  const { results } = await db.prepare(
+    'SELECT * FROM document_receipt_events WHERE job_id = ? ORDER BY created_at ASC'
+  ).bind(jobId).all();
+  return results.map(rowToReceipt);
+}
+
+async function createDocumentReceipt(db, jobId, body, user) {
+  const job = await db.prepare('SELECT id FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) throw new Error('job not found');
+
+  const receiptDate = (body.receipt_date || '').trim();
+  const receiptMode = (body.receipt_mode || '').trim();
+  const docs = Array.isArray(body.documents_received)
+    ? body.documents_received.map(d => String(d).trim()).filter(Boolean) : [];
+  const remarks = (body.remarks || '').trim();
+
+  if (!EVENT_DATE_RE.test(receiptDate)) throw new Error('A valid receipt date (YYYY-MM-DD) is required');
+  if (docs.length === 0) throw new Error('At least one received document is required');
+
+  const now = Date.now();
+  const id = `DR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO document_receipt_events (id, job_id, receipt_date, receipt_mode, documents_received, remarks, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, receiptDate, receiptMode, JSON.stringify(docs), remarks, user.id, now, now).run();
+
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} added document receipt — ${docs.length} document(s) received${receiptMode ? ' by ' + receiptMode : ''} — ${receiptDate}.`,
+    ts: now, actor: user.id,
+  }]);
+
+  return { id, job_id: jobId, receipt_date: receiptDate, receipt_mode: receiptMode, documents_received: docs, remarks,
+    created_by: user.id, created_at: now, updated_at: now };
+}
+
+async function updateDocumentReceipt(db, jobId, receiptId, body, user) {
+  const existing = await db.prepare('SELECT * FROM document_receipt_events WHERE id = ? AND job_id = ?')
+    .bind(receiptId, jobId).first();
+  if (!existing) throw new Error('document receipt not found');
+  const existingDocs = JSON.parse(existing.documents_received || '[]');
+
+  const next = {
+    receipt_date: body.receipt_date !== undefined ? String(body.receipt_date).trim() : existing.receipt_date,
+    receipt_mode: body.receipt_mode !== undefined ? String(body.receipt_mode).trim() : existing.receipt_mode,
+    documents_received: body.documents_received !== undefined
+      ? (Array.isArray(body.documents_received) ? body.documents_received.map(d => String(d).trim()).filter(Boolean) : [])
+      : existingDocs,
+    remarks: body.remarks !== undefined ? String(body.remarks).trim() : existing.remarks,
+  };
+  if (!EVENT_DATE_RE.test(next.receipt_date)) throw new Error('A valid receipt date (YYYY-MM-DD) is required');
+  if (next.documents_received.length === 0) throw new Error('At least one received document is required');
+
+  const changeLines = [];
+  if (next.receipt_date !== existing.receipt_date) changeLines.push(`date from ${existing.receipt_date} to ${next.receipt_date}`);
+  if (next.receipt_mode !== (existing.receipt_mode || '')) changeLines.push(`mode from "${existing.receipt_mode || '—'}" to "${next.receipt_mode || '—'}"`);
+  if (JSON.stringify(existingDocs) !== JSON.stringify(next.documents_received)) changeLines.push('documents received');
+  if (next.remarks !== (existing.remarks || '')) changeLines.push('remarks');
+
+  const now = Date.now();
+  await db.prepare('UPDATE document_receipt_events SET receipt_date=?, receipt_mode=?, documents_received=?, remarks=?, updated_at=? WHERE id = ?')
+    .bind(next.receipt_date, next.receipt_mode, JSON.stringify(next.documents_received), next.remarks, now, receiptId).run();
+
+  if (changeLines.length > 0) {
+    await appendJobActivity(db, jobId, [{ text: `${user.id} updated document receipt ${changeLines.join('; ')}.`, ts: now, actor: user.id }]);
+  }
+
+  return rowToReceipt(await db.prepare('SELECT * FROM document_receipt_events WHERE id = ?').bind(receiptId).first());
 }
 
 async function getSetting(db, key) {
@@ -787,6 +1017,42 @@ export default {
           const visitId = decodeURIComponent(visitItemMatch[2]);
           const body = await request.json();
           return json(await updateSurveyVisit(db, jobId, visitId, body, user));
+        }
+
+        const reminderCollectionMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/reminders\/?$/);
+        if (reminderCollectionMatch) {
+          const jobId = decodeURIComponent(reminderCollectionMatch[1]);
+          if (request.method === 'GET') return json(await listReminders(db, jobId));
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await createReminder(db, jobId, body, user), 201);
+          }
+        }
+
+        const reminderItemMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/reminders\/([^/]+)$/);
+        if (reminderItemMatch && request.method === 'PATCH') {
+          const jobId = decodeURIComponent(reminderItemMatch[1]);
+          const reminderId = decodeURIComponent(reminderItemMatch[2]);
+          const body = await request.json();
+          return json(await updateReminder(db, jobId, reminderId, body, user));
+        }
+
+        const receiptCollectionMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/document-receipts\/?$/);
+        if (receiptCollectionMatch) {
+          const jobId = decodeURIComponent(receiptCollectionMatch[1]);
+          if (request.method === 'GET') return json(await listDocumentReceipts(db, jobId));
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await createDocumentReceipt(db, jobId, body, user), 201);
+          }
+        }
+
+        const receiptItemMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/document-receipts\/([^/]+)$/);
+        if (receiptItemMatch && request.method === 'PATCH') {
+          const jobId = decodeURIComponent(receiptItemMatch[1]);
+          const receiptId = decodeURIComponent(receiptItemMatch[2]);
+          const body = await request.json();
+          return json(await updateDocumentReceipt(db, jobId, receiptId, body, user));
         }
       }
 
