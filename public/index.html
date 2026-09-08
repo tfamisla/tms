@@ -284,6 +284,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
     <div class="assigned-grid" id="insurerGrid"></div>
     <div class="sp-section-label" style="margin-top:24px">TFAM Branches</div>
     <div class="assigned-grid" id="branchGrid"></div>
+    <div class="sp-section-label" style="margin-top:24px">Settings</div>
+    <div class="log-toolbar" id="settingsPanel" hidden>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+        Inspection Staff Visibility:
+        <select id="inspectionVisibilitySelect" class="log-filter-sel" onchange="updateInspectionVisibility(this.value)">
+          <option value="visible">Visible</option>
+          <option value="hidden">Hidden</option>
+        </select>
+      </label>
+    </div>
   </div>
 </div>
 
@@ -638,6 +648,75 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
   </div>
 </div>
 
+<!-- ── SURVEY VISIT HISTORY MODAL ── -->
+<div class="modal-overlay" id="surveyHistoryModal" hidden onclick="e=>e.target===this&&closeSurveyHistory()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Survey Visit History — <span id="sh-job-id" class="mono" style="font-size:14px"></span></h2>
+      <button class="sp-close" onclick="closeSurveyHistory()">✕</button>
+    </div>
+    <div class="modal-body">
+      <button type="button" class="btn-add-contact" onclick="openVisitForm()">+ Add Survey Visit</button>
+      <div id="visitList"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeSurveyHistory()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD/EDIT SURVEY VISIT MODAL ── -->
+<div class="modal-overlay" id="visitFormModal" hidden onclick="e=>e.target===this&&closeVisitForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="vf-modal-title">Add Survey Visit</h2>
+      <button class="sp-close" onclick="closeVisitForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field">
+          <label>Date of Survey *</label>
+          <input id="vf-date" type="date" required>
+        </div>
+        <div class="form-field">
+          <label>Time of Survey</label>
+          <input id="vf-time" type="time">
+        </div>
+        <div class="form-field">
+          <label>Reason for Visit *</label>
+          <select id="vf-reason" onchange="document.getElementById('vf-reason-other').hidden = this.value !== 'Other'">
+            <option value="Initial Survey">Initial Survey</option>
+            <option value="Reinspection">Reinspection</option>
+            <option value="Joint Inspection">Joint Inspection</option>
+            <option value="Dismantling Inspection">Dismantling Inspection</option>
+            <option value="Repair Inspection">Repair Inspection</option>
+            <option value="Damage Verification">Damage Verification</option>
+            <option value="Document / Record Verification">Document / Record Verification</option>
+            <option value="Final Inspection">Final Inspection</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field" id="vf-reason-other" hidden>
+          <label>Custom Reason</label>
+          <input id="vf-reason-custom">
+        </div>
+        <div class="form-field full">
+          <label>Persons Who Inspected *</label>
+          <div class="assigned-grid" id="vf-inspectors"></div>
+        </div>
+        <div class="form-field full">
+          <label>Remarks</label>
+          <textarea id="vf-remarks" class="notes-area" rows="3"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitVisitForm()">Save Visit</button>
+      <button class="btn-secondary" onclick="closeVisitForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // CONFIG — set your Worker URL after deploy
@@ -688,6 +767,16 @@ let jobs = [];
 let log  = [];
 let INSURERS = [];
 let BRANCHES = [];
+let SETTINGS = {};
+let surveyVisits = [];
+let currentSurveyJobId = null;
+let editingVisitId = null;
+
+const VISIT_REASONS = [
+  'Initial Survey', 'Reinspection', 'Joint Inspection', 'Dismantling Inspection',
+  'Repair Inspection', 'Damage Verification', 'Document / Record Verification',
+  'Final Inspection', 'Other',
+];
 let currentUser = null;        // logged-in staff id
 let currentUserRecord = null;  // full staff record {id,name,role,access_role,...}
 let stageFilter = null;
@@ -786,23 +875,26 @@ async function logout() {
 // ── API CALLS ─────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [jRes, lRes, sRes, iRes, bRes] = await Promise.all([
+    const [jRes, lRes, sRes, iRes, bRes, setRes] = await Promise.all([
       fetch(API + '/api/jobs'),
       fetch(API + '/api/log'),
       fetch(API + '/api/staff'),
       fetch(API + '/api/insurers'),
       fetch(API + '/api/branches'),
+      fetch(API + '/api/settings'),
     ]);
-    if ([jRes, lRes, sRes, iRes, bRes].some(r => r.status === 401)) { sessionExpired(); return; }
-    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok || !bRes.ok) throw new Error('bad response');
+    if ([jRes, lRes, sRes, iRes, bRes, setRes].some(r => r.status === 401)) { sessionExpired(); return; }
+    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok || !bRes.ok || !setRes.ok) throw new Error('bad response');
     jobs = await jRes.json();
     log  = await lRes.json();
     TEAM = await sRes.json();
     INSURERS = await iRes.json();
     BRANCHES = await bRes.json();
+    SETTINGS = await setRes.json();
     setOnline(true);
     buildLogFilters();
     buildInsurerList();
+    renderSettingsPanel();
     if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
     renderAll();
   } catch(e) {
@@ -834,6 +926,13 @@ async function apiPatch(path, body) {
 
 async function apiDelete(path) {
   const r = await fetch(API + path, { method: 'DELETE' });
+  if (r.status === 401) { sessionExpired(); throw new Error('Session expired — please sign in again.'); }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function apiGet(path) {
+  const r = await fetch(API + path);
   if (r.status === 401) { sessionExpired(); throw new Error('Session expired — please sign in again.'); }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
@@ -1184,6 +1283,20 @@ function buildJobPanel(j) {
           <option value="1" ${j.appointment_confirmed?'selected':''}>Confirmed</option>
         </select>
       </div>
+    </div>
+  </div>
+
+  <!-- Survey -->
+  <div class="sp-section">
+    <div class="sp-section-label">Survey</div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-weight:600;font-size:13px">${surveyStatusBadge(j.survey_status).emoji} ${surveyStatusBadge(j.survey_status).label}</span>
+      <span style="font-size:12px;color:var(--text-faint)">Visits: ${j.survey_visit_count||0}</span>
+    </div>
+    ${j.last_survey_visit ? `<div style="font-size:12px;color:var(--text-sec);margin-bottom:10px">Last Visit: ${j.last_survey_visit.visit_date}${j.last_survey_visit.visit_time?' '+j.last_survey_visit.visit_time:''} — ${esc(j.last_survey_visit.reason)}</div>` : ''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn-secondary" onclick="openSurveyHistory('${j.id}')">View Survey History</button>
+      ${j.survey_status !== 'completed' ? `<button type="button" class="btn-secondary" onclick="markSurveyCompleted('${j.id}')">Mark Survey Completed</button>` : ''}
     </div>
   </div>
 
@@ -1756,6 +1869,142 @@ function isSurveyor(m) { return normRole(m.role).includes('surveyor'); }
 // and backend staff must never appear as a signing surveyor.
 function canSignSurvey(m) { return isDirector(m) || (isSurveyor(m) && !isTrainee(m)); }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── SURVEY VISITS (V0.8) ────────────────────────────────────────
+function surveyStatusBadge(status) {
+  const map = {
+    not_surveyed: { emoji: '⚪', label: 'Not Surveyed' },
+    in_progress:  { emoji: '🟡', label: 'Survey In Progress' },
+    completed:    { emoji: '🟢', label: 'Survey Completed' },
+  };
+  return map[status] || map.not_surveyed;
+}
+
+// Inspecting-staff names are hidden from non-admins when the admin has
+// set Inspection Staff Visibility to Hidden. The server already strips
+// inspected_by_ids from the API response in that case (enforced there,
+// not just in this UI check), so this only controls display wording.
+function canSeeInspectors() {
+  return isAdminUser() || SETTINGS.inspection_staff_visibility !== 'hidden';
+}
+
+async function openSurveyHistory(jobId) {
+  currentSurveyJobId = jobId;
+  document.getElementById('sh-job-id').textContent = jobId;
+  document.getElementById('surveyHistoryModal').hidden = false;
+  document.getElementById('visitList').innerHTML = '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">Loading…</div>';
+  try {
+    surveyVisits = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/survey-visits');
+  } catch(e) {
+    surveyVisits = [];
+  }
+  renderVisitList();
+}
+function closeSurveyHistory() { document.getElementById('surveyHistoryModal').hidden = true; }
+
+function renderVisitList() {
+  document.getElementById('visitList').innerHTML = surveyVisits.length === 0
+    ? '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">No survey visits recorded yet.</div>'
+    : surveyVisits.map((v, i) => {
+      const inspectors = canSeeInspectors()
+        ? ((v.inspected_by_ids||[]).map(id => teamMember(id)).filter(Boolean).map(m => esc(m.name)).join(', ') || '—')
+        : '(hidden)';
+      return `
+      <div class="act-row" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px" onclick="openVisitForm('${v.id}')" title="Click to edit">
+        <div style="display:flex;justify-content:space-between;gap:10px;font-weight:600;font-size:13px">
+          <span>Visit ${i+1} — ${esc(v.reason)}</span>
+          <span class="mono" style="color:var(--text-faint);font-weight:400;font-size:11px;white-space:nowrap">${v.visit_date}${v.visit_time?' • '+v.visit_time:''}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-sec)">Inspected by: ${inspectors}</div>
+        ${v.remarks ? `<div style="font-size:12px;color:var(--text-sec)">Remarks: ${esc(v.remarks)}</div>` : ''}
+      </div>`;
+    }).join('');
+}
+
+function openVisitForm(visitId) {
+  editingVisitId = visitId || null;
+  const v = visitId ? surveyVisits.find(x => x.id === visitId) : null;
+  document.getElementById('vf-modal-title').textContent = v ? 'Edit Survey Visit' : 'Add Survey Visit';
+  document.getElementById('vf-date').value = v ? v.visit_date : '';
+  document.getElementById('vf-time').value = v ? (v.visit_time||'') : '';
+  const knownReason = v ? (VISIT_REASONS.includes(v.reason) ? v.reason : 'Other') : 'Initial Survey';
+  document.getElementById('vf-reason').value = knownReason;
+  document.getElementById('vf-reason-other').hidden = knownReason !== 'Other';
+  document.getElementById('vf-reason-custom').value = (v && knownReason === 'Other') ? v.reason : '';
+  document.getElementById('vf-remarks').value = v ? (v.remarks||'') : '';
+  document.getElementById('vf-inspectors').innerHTML = chipsHtml(TEAM, v ? v.inspected_by_ids : []);
+  document.getElementById('visitFormModal').hidden = false;
+}
+function closeVisitForm() { document.getElementById('visitFormModal').hidden = true; }
+
+async function submitVisitForm() {
+  const date = document.getElementById('vf-date').value;
+  if (!date) { alert('Date of Survey is required.'); return; }
+
+  let reason = document.getElementById('vf-reason').value;
+  if (reason === 'Other') {
+    reason = document.getElementById('vf-reason-custom').value.trim();
+    if (!reason) { alert('Please enter a custom reason.'); return; }
+  }
+
+  const inspected_by_ids = [...document.querySelectorAll('#vf-inspectors .active')].map(el => el.dataset.id);
+  if (inspected_by_ids.length === 0) { alert('Select at least one person who inspected.'); return; }
+
+  const body = {
+    visit_date: date,
+    visit_time: document.getElementById('vf-time').value,
+    reason,
+    inspected_by_ids,
+    remarks: document.getElementById('vf-remarks').value.trim(),
+  };
+
+  try {
+    if (editingVisitId) {
+      await apiPatch('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/survey-visits/' + encodeURIComponent(editingVisitId), body);
+    } else {
+      await apiPost('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/survey-visits', body);
+    }
+    closeVisitForm();
+    surveyVisits = await apiGet('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/survey-visits');
+    renderVisitList();
+    fetchAll();
+  } catch(e) {
+    alert('Error saving visit: ' + e.message);
+  }
+}
+
+async function markSurveyCompleted(jobId) {
+  if (!confirm('Mark the survey process as completed for this job?')) return;
+  try {
+    const updated = await apiPatch('/api/jobs/' + encodeURIComponent(jobId), {
+      survey_status: 'completed',
+      activity_add: [{ text: `${(teamMember(currentUser)||{}).name || currentUser} marked survey process completed.`, ts: Date.now(), actor: currentUser }],
+    });
+    jobs = jobs.map(jj => jj.id === jobId ? { ...jj, ...updated } : jj);
+    renderAll();
+    if (openJobId === jobId) openJob(jobId);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// ── ADMIN SETTINGS (V0.8) ────────────────────────────────────
+function renderSettingsPanel() {
+  const panel = document.getElementById('settingsPanel');
+  panel.hidden = !isAdminUser();
+  if (!panel.hidden) {
+    document.getElementById('inspectionVisibilitySelect').value = SETTINGS.inspection_staff_visibility || 'visible';
+  }
+}
+
+async function updateInspectionVisibility(value) {
+  try {
+    await apiPatch('/api/settings/inspection_staff_visibility', { value });
+    SETTINGS.inspection_staff_visibility = value;
+  } catch(e) {
+    alert('Error updating setting: ' + e.message);
+  }
+}
 </script>
 </body>
 </html>

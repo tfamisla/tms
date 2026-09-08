@@ -27,7 +27,7 @@ const JOB_TEXT_FIELDS = [
 ];
 
 const UPDATABLE_FIELDS = [
-  'title', ...JOB_TEXT_FIELDS, 'survey_date',
+  'title', ...JOB_TEXT_FIELDS, 'survey_date', 'survey_status',
   'appointment_date', 'appointment_confirmed', 'stage',
   'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'contacts',
   'notes', 'docs',
@@ -119,7 +119,20 @@ function validatePolicyPeriod(from, to) {
 
 async function listJobs(db) {
   const { results } = await db.prepare('SELECT * FROM jobs ORDER BY updated_at DESC').all();
-  return results.map(rowToJob);
+  const { results: visits } = await db.prepare(
+    'SELECT job_id, visit_date, visit_time, reason, created_at FROM survey_visits ORDER BY created_at ASC'
+  ).all();
+  const byJob = {};
+  for (const v of visits) (byJob[v.job_id] ||= []).push(v);
+
+  return results.map(row => {
+    const job = rowToJob(row);
+    const jobVisits = byJob[job.id] || [];
+    job.survey_visit_count = jobVisits.length;
+    const last = jobVisits[jobVisits.length - 1];
+    job.last_survey_visit = last ? { visit_date: last.visit_date, visit_time: last.visit_time, reason: last.reason } : null;
+    return job;
+  });
 }
 
 async function listLog(db) {
@@ -216,6 +229,162 @@ async function updateJob(db, id, body) {
 
   const updated = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
   return rowToJob(updated);
+}
+
+// Appends entries to a job's activity log outside the generic updateJob
+// path (used by survey-visit handlers, which live on their own routes).
+async function appendJobActivity(db, jobId, entries) {
+  const job = await db.prepare('SELECT activity FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) return;
+  let activity = [];
+  try { activity = JSON.parse(job.activity); } catch { activity = []; }
+  activity.push(...entries);
+  await db.prepare('UPDATE jobs SET activity = ?, updated_at = ? WHERE id = ?')
+    .bind(JSON.stringify(activity), Date.now(), jobId).run();
+}
+
+function rowToVisit(row, canSeeInspectors) {
+  const visit = { ...row };
+  try { visit.inspected_by_ids = JSON.parse(row.inspected_by_ids); } catch { visit.inspected_by_ids = []; }
+  if (!canSeeInspectors) visit.inspected_by_ids = [];
+  return visit;
+}
+
+const VISIT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const VISIT_TIME_RE = /^\d{2}:\d{2}$/;
+
+async function listSurveyVisits(db, jobId, canSeeInspectors) {
+  const { results } = await db.prepare(
+    'SELECT * FROM survey_visits WHERE job_id = ? ORDER BY created_at ASC'
+  ).bind(jobId).all();
+  return results.map(r => rowToVisit(r, canSeeInspectors));
+}
+
+function formatVisitWhen(date, time) {
+  return time ? `${date} ${time}` : date;
+}
+
+async function createSurveyVisit(db, jobId, body, user) {
+  const job = await db.prepare('SELECT id, survey_status FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) throw new Error('job not found');
+
+  const visitDate = (body.visit_date || '').trim();
+  const visitTime = (body.visit_time || '').trim();
+  const reason = (body.reason || '').trim();
+  const inspectedBy = Array.isArray(body.inspected_by_ids) ? body.inspected_by_ids : [];
+  const remarks = (body.remarks || '').trim();
+
+  if (!VISIT_DATE_RE.test(visitDate)) throw new Error('A valid visit date (YYYY-MM-DD) is required');
+  if (!reason) throw new Error('Reason for visit is required');
+  if (inspectedBy.length === 0) throw new Error('At least one inspecting staff member is required');
+  if (visitTime && !VISIT_TIME_RE.test(visitTime)) throw new Error('Visit time must be in HH:MM format');
+  await validateIdsExist(db, 'staff', inspectedBy, 'inspecting staff id');
+
+  const now = Date.now();
+  const id = `SV-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const visit = {
+    id, job_id: jobId, visit_date: visitDate, visit_time: visitTime, reason,
+    inspected_by_ids: JSON.stringify(inspectedBy), remarks,
+    created_by: user.id, created_at: now, updated_at: now,
+  };
+
+  await db.prepare(`
+    INSERT INTO survey_visits (id, job_id, visit_date, visit_time, reason, inspected_by_ids, remarks, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).bind(visit.id, visit.job_id, visit.visit_date, visit.visit_time, visit.reason,
+    visit.inspected_by_ids, visit.remarks, visit.created_by, visit.created_at, visit.updated_at).run();
+
+  // Adding a visit means the survey process is (still) underway — never
+  // silently assume a single visit finishes the job; only an explicit
+  // "Mark Survey Completed" action can set status to 'completed'. A new
+  // visit added after completion re-opens it, since further work is
+  // clearly happening.
+  if (job.survey_status !== 'in_progress') {
+    await db.prepare('UPDATE jobs SET survey_status = ? WHERE id = ?').bind('in_progress', jobId).run();
+  }
+
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} added survey visit — ${reason} — ${formatVisitWhen(visitDate, visitTime)}.`,
+    ts: now, actor: user.id,
+  }]);
+
+  return rowToVisit(visit, true);
+}
+
+const VISIT_FIELD_LABELS = {
+  visit_date: 'date', visit_time: 'time', reason: 'reason',
+  inspected_by_ids: 'inspecting staff', remarks: 'remarks',
+};
+
+async function updateSurveyVisit(db, jobId, visitId, body, user) {
+  const existing = await db.prepare('SELECT * FROM survey_visits WHERE id = ? AND job_id = ?')
+    .bind(visitId, jobId).first();
+  if (!existing) throw new Error('survey visit not found');
+
+  const next = {
+    visit_date: body.visit_date !== undefined ? String(body.visit_date).trim() : existing.visit_date,
+    visit_time: body.visit_time !== undefined ? String(body.visit_time).trim() : existing.visit_time,
+    reason: body.reason !== undefined ? String(body.reason).trim() : existing.reason,
+    inspected_by_ids: body.inspected_by_ids !== undefined
+      ? (Array.isArray(body.inspected_by_ids) ? body.inspected_by_ids : [])
+      : JSON.parse(existing.inspected_by_ids || '[]'),
+    remarks: body.remarks !== undefined ? String(body.remarks).trim() : existing.remarks,
+  };
+
+  if (!VISIT_DATE_RE.test(next.visit_date)) throw new Error('A valid visit date (YYYY-MM-DD) is required');
+  if (!next.reason) throw new Error('Reason for visit is required');
+  if (next.inspected_by_ids.length === 0) throw new Error('At least one inspecting staff member is required');
+  if (next.visit_time && !VISIT_TIME_RE.test(next.visit_time)) throw new Error('Visit time must be in HH:MM format');
+  await validateIdsExist(db, 'staff', next.inspected_by_ids, 'inspecting staff id');
+
+  const { results: allVisits } = await db.prepare(
+    'SELECT id FROM survey_visits WHERE job_id = ? ORDER BY created_at ASC'
+  ).bind(jobId).all();
+  const visitNumber = allVisits.findIndex(v => v.id === visitId) + 1;
+
+  const changeLines = [];
+  const oldInspected = JSON.parse(existing.inspected_by_ids || '[]');
+  if (next.visit_date !== existing.visit_date) changeLines.push(`date from ${existing.visit_date} to ${next.visit_date}`);
+  if (next.visit_time !== (existing.visit_time || '')) changeLines.push(`time from "${existing.visit_time||'—'}" to "${next.visit_time||'—'}"`);
+  if (next.reason !== existing.reason) changeLines.push(`reason from "${existing.reason}" to "${next.reason}"`);
+  if (JSON.stringify(oldInspected.slice().sort()) !== JSON.stringify(next.inspected_by_ids.slice().sort())) {
+    changeLines.push('inspecting staff');
+  }
+  if (next.remarks !== (existing.remarks || '')) changeLines.push('remarks');
+
+  const now = Date.now();
+  await db.prepare(`
+    UPDATE survey_visits SET visit_date=?, visit_time=?, reason=?, inspected_by_ids=?, remarks=?, updated_at=?
+    WHERE id = ?
+  `).bind(next.visit_date, next.visit_time, next.reason, JSON.stringify(next.inspected_by_ids), next.remarks, now, visitId).run();
+
+  if (changeLines.length > 0) {
+    await appendJobActivity(db, jobId, [{
+      text: `${user.id} changed Survey Visit ${visitNumber} ${changeLines.join('; ')}.`,
+      ts: now, actor: user.id,
+    }]);
+  }
+
+  const updated = await db.prepare('SELECT * FROM survey_visits WHERE id = ?').bind(visitId).first();
+  return rowToVisit(updated, true);
+}
+
+async function getSetting(db, key) {
+  const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first();
+  return row ? row.value : null;
+}
+
+async function listSettings(db) {
+  const { results } = await db.prepare('SELECT key, value FROM settings').all();
+  const out = {};
+  for (const r of results) out[r.key] = r.value;
+  return out;
+}
+
+async function updateSetting(db, key, value) {
+  await db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .bind(key, value).run();
+  return { key, value };
 }
 
 const STAFF_COLORS = [
@@ -596,6 +765,31 @@ export default {
         return json(await createJob(db, body), 201);
       }
 
+      {
+        const visitCollectionMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/survey-visits\/?$/);
+        if (visitCollectionMatch) {
+          const jobId = decodeURIComponent(visitCollectionMatch[1]);
+          const visibility = await getSetting(db, 'inspection_staff_visibility');
+          const canSeeInspectors = isAdmin(user) || visibility !== 'hidden';
+
+          if (request.method === 'GET') {
+            return json(await listSurveyVisits(db, jobId, canSeeInspectors));
+          }
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await createSurveyVisit(db, jobId, body, user), 201);
+          }
+        }
+
+        const visitItemMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/survey-visits\/([^/]+)$/);
+        if (visitItemMatch && request.method === 'PATCH') {
+          const jobId = decodeURIComponent(visitItemMatch[1]);
+          const visitId = decodeURIComponent(visitItemMatch[2]);
+          const body = await request.json();
+          return json(await updateSurveyVisit(db, jobId, visitId, body, user));
+        }
+      }
+
       if (pathname.startsWith('/api/jobs/') && request.method === 'PATCH') {
         const id = decodeURIComponent(pathname.slice('/api/jobs/'.length));
         const body = await request.json();
@@ -604,6 +798,17 @@ export default {
 
       if (pathname === '/api/log' && request.method === 'GET') {
         return json(await listLog(db));
+      }
+
+      if (pathname === '/api/settings' && request.method === 'GET') {
+        return json(await listSettings(db));
+      }
+
+      if (pathname.startsWith('/api/settings/') && request.method === 'PATCH') {
+        if (!isAdmin(user)) return error('Admin access required', 403);
+        const key = decodeURIComponent(pathname.slice('/api/settings/'.length));
+        const body = await request.json();
+        return json(await updateSetting(db, key, String(body.value)));
       }
 
       if (pathname === '/api/staff' && request.method === 'GET') {

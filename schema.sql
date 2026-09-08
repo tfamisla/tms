@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   gross_loss           TEXT    DEFAULT '',
   department           TEXT    DEFAULT '',
   -- ── Survey scheduling ──
-  survey_date          TEXT    DEFAULT '',
+  survey_date          TEXT    DEFAULT '',   -- legacy single date, kept for backward compat; survey_visits is now authoritative
+  survey_status        TEXT    NOT NULL DEFAULT 'not_surveyed',  -- 'not_surveyed' | 'in_progress' | 'completed'
   appointment_date     TEXT    DEFAULT '',
   appointment_confirmed INTEGER DEFAULT 0,
   stage                TEXT    NOT NULL DEFAULT 'new_claim',
@@ -115,3 +116,29 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+
+-- ── Survey Visits ────────────────────────────────────────────
+-- One job -> many survey visits (initial survey, reinspection, dismantling
+-- inspection, ...). Authoritative visit history; jobs.survey_date/
+-- survey_status remain for backward-compat/summary display only.
+CREATE TABLE IF NOT EXISTS survey_visits (
+  id               TEXT    PRIMARY KEY,
+  job_id           TEXT    NOT NULL,
+  visit_date       TEXT    NOT NULL,
+  visit_time       TEXT    DEFAULT '',
+  reason           TEXT    NOT NULL,
+  inspected_by_ids TEXT    NOT NULL DEFAULT '[]',  -- JSON array of staff IDs
+  remarks          TEXT    DEFAULT '',
+  created_by       TEXT    DEFAULT '',
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_survey_visits_job ON survey_visits (job_id);
+
+-- ── Settings (admin-controlled, global key/value) ─────────────
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+INSERT OR IGNORE INTO settings (key, value) VALUES ('inspection_staff_visibility', 'visible');
