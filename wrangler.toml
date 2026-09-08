@@ -1,0 +1,8 @@
+name = "tms-worker"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "TMS_DB"
+database_name = "TMS_DB"
+database_id = "bde9756d-49c9-45d9-b4f9-21420b904a32"

@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TMS · TFAM Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* ── CONFIG: set your Worker URL after deploy ── */
+/* Edited in JS: const API = '...' below */
+
+:root{
+  --navy:#162040;--navy-mid:#1F2E52;--amber:#C97D0E;--amber-lt:#F0A930;
+  --amber-bg:#FEF3DC;--ground:#F2F5FA;--surface:#FFFFFF;--border:#DDE3EE;
+  --text-pri:#162040;--text-sec:#4B5975;--text-faint:#8A9AB8;
+  --green:#1A7A4A;--green-bg:#E4F5EC;--red:#B52A2A;--red-bg:#FAEAEA;
+  --blue:#1A4FA0;--blue-bg:#E4ECFA;
+  --radius-sm:4px;--radius:8px;--radius-lg:14px;
+  --shadow-sm:0 1px 3px rgba(22,32,64,.07),0 1px 2px rgba(22,32,64,.04);
+  --shadow:0 4px 16px rgba(22,32,64,.12);
+}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --navy:#A8BFFF;--navy-mid:#1E2A45;--amber:#F0A930;--amber-lt:#FFD07A;
+  --amber-bg:#2A1F00;--ground:#0E1520;--surface:#151E30;--border:#1F2D46;
+  --text-pri:#C8D8F8;--text-sec:#7A8DAD;--text-faint:#4A5975;
+  --green:#3DCC7A;--green-bg:#0A1F14;--red:#FF7070;--red-bg:#200A0A;
+  --blue:#6699FF;--blue-bg:#0A1225;
+}}
+:root[data-theme="dark"]{
+  --navy:#A8BFFF;--navy-mid:#1E2A45;--amber:#F0A930;--amber-lt:#FFD07A;
+  --amber-bg:#2A1F00;--ground:#0E1520;--surface:#151E30;--border:#1F2D46;
+  --text-pri:#C8D8F8;--text-sec:#7A8DAD;--text-faint:#4A5975;
+  --green:#3DCC7A;--green-bg:#0A1F14;--red:#FF7070;--red-bg:#200A0A;
+  --blue:#6699FF;--blue-bg:#0A1225;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:var(--text-pri);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+
+/* ── TOP BAR ── */
+.topbar{background:var(--navy-mid);color:#fff;height:52px;display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0;z-index:100}
+.topbar-brand{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:.12em;color:var(--amber-lt);font-weight:500;white-space:nowrap}
+.topbar-nav{display:flex;gap:2px;flex:1}
+.nav-btn{background:none;border:none;color:rgba(255,255,255,.65);font-family:inherit;font-size:13px;font-weight:500;padding:6px 12px;border-radius:var(--radius-sm);cursor:pointer;transition:color .15s,background .15s;white-space:nowrap}
+.nav-btn:hover{color:#fff;background:rgba(255,255,255,.08)}
+.nav-btn.active{color:#fff;background:rgba(255,255,255,.12)}
+.topbar-right{display:flex;align-items:center;gap:10px;margin-left:auto}
+.live-dot{width:7px;height:7px;border-radius:50%;background:#22C55E;flex-shrink:0;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.live-dot.offline{background:#EF4444;animation:none}
+.user-sel{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:var(--radius-sm);color:#fff;font-family:inherit;font-size:12px;padding:4px 8px;cursor:pointer}
+.user-sel option{color:var(--text-pri);background:var(--surface)}
+.btn-new{background:var(--amber);color:#fff;border:none;font-family:inherit;font-size:13px;font-weight:600;padding:7px 14px;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.btn-new:hover{opacity:.88}
+
+/* ── MAIN AREA ── */
+.main-area{flex:1;overflow:hidden;display:flex;flex-direction:column}
+
+/* ── STATS STRIP ── */
+.stats-strip{display:flex;gap:1px;background:var(--border);border-bottom:1px solid var(--border);flex-shrink:0}
+.stat-tile{flex:1;background:var(--surface);padding:10px 14px;cursor:pointer;transition:background .15s;min-width:0}
+.stat-tile:hover{background:var(--amber-bg)}
+.stat-tile.active-filter{background:var(--amber-bg);border-bottom:2px solid var(--amber)}
+.stat-num{font-family:'DM Mono',monospace;font-size:20px;font-weight:500;color:var(--text-pri);line-height:1}
+.stat-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-faint);margin-top:2px}
+
+/* ── VIEWS ── */
+.view{flex:1;overflow:hidden;display:none;flex-direction:column}
+.view.active{display:flex}
+
+/* ── KANBAN ── */
+.kanban-wrap{flex:1;overflow-x:auto;overflow-y:hidden;padding:16px}
+.kanban{display:flex;gap:10px;height:100%;align-items:flex-start;min-width:max-content}
+.k-col{width:220px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;max-height:100%;flex-shrink:0}
+.k-col-hdr{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0}
+.k-stage-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.k-stage-name{font-size:12px;font-weight:600;color:var(--text-pri);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.k-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--text-faint);flex-shrink:0}
+.k-cards{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px}
+.k-card{background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 11px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.k-card:hover{border-color:var(--amber);box-shadow:var(--shadow-sm)}
+.k-card-id{font-family:'DM Mono',monospace;font-size:10px;color:var(--text-faint)}
+.k-card-title{font-size:12.5px;font-weight:500;color:var(--text-pri);margin-top:3px;line-height:1.35}
+.k-card-meta{font-size:11px;color:var(--text-sec);margin-top:4px}
+.k-card-avatars{display:flex;gap:3px;margin-top:7px;flex-wrap:wrap}
+.avatar{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;flex-shrink:0;cursor:default}
+.empty-col{text-align:center;padding:20px 12px;font-size:11px;color:var(--text-faint)}
+
+/* ── STAFF VIEW ── */
+.staff-wrap{flex:1;overflow:auto;padding:16px}
+.staff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.staff-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.staff-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.staff-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0}
+.staff-name{font-size:14px;font-weight:600}
+.staff-role{font-size:11px;color:var(--text-sec)}
+.staff-job-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--amber);margin-left:auto;font-weight:500}
+.staff-jobs{display:flex;flex-direction:column;gap:5px}
+.staff-job-row{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:var(--ground);border-radius:var(--radius-sm);cursor:pointer;transition:background .15s}
+.staff-job-row:hover{background:var(--amber-bg)}
+.staff-job-id{font-family:'DM Mono',monospace;font-size:10px;color:var(--text-faint)}
+.staff-job-title{font-size:12px;font-weight:500;flex:1;padding:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage-badge{font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:100px;background:var(--ground);border:1px solid var(--border);white-space:nowrap}
+
+/* ── WORK LOG ── */
+.log-wrap{flex:1;overflow:auto;padding:16px}
+.log-toolbar{display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap}
+.log-filter-sel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-pri);font-family:inherit;font-size:12.5px;padding:6px 10px;cursor:pointer}
+.log-list{display:flex;flex-direction:column;gap:0}
+.log-entry{display:grid;grid-template-columns:160px 80px 1fr;gap:0 12px;padding:8px 0;border-bottom:1px solid var(--border);align-items:start}
+.log-ts{font-family:'DM Mono',monospace;font-size:10.5px;color:var(--text-faint)}
+.log-actor{font-size:11px;font-weight:600;color:var(--text-sec)}
+.log-text{font-size:12.5px;color:var(--text-pri)}
+.log-job-link{font-family:'DM Mono',monospace;font-size:10px;color:var(--amber);cursor:pointer;margin-left:6px}
+.log-job-link:hover{text-decoration:underline}
+
+/* ── SIDE PANEL ── */
+.overlay{position:fixed;inset:0;background:rgba(22,32,64,.35);z-index:200;opacity:0;pointer-events:none;transition:opacity .2s}
+.overlay.open{opacity:1;pointer-events:auto}
+.side-panel{position:fixed;top:0;right:0;bottom:0;width:min(520px,100vw);background:var(--surface);border-left:1px solid var(--border);z-index:201;transform:translateX(100%);transition:transform .25s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;overflow:hidden}
+.side-panel.open{transform:translateX(0)}
+.sp-topbar{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sp-job-id{font-family:'DM Mono',monospace;font-size:13px;font-weight:500;color:var(--amber)}
+.sp-title{font-size:16px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-close{background:none;border:none;font-size:20px;color:var(--text-faint);cursor:pointer;padding:4px;line-height:1;margin-left:auto;flex-shrink:0}
+.sp-close:hover{color:var(--text-pri)}
+.sp-body{flex:1;overflow-y:auto;padding:18px}
+.sp-section{margin-bottom:20px}
+.sp-section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);margin-bottom:10px}
+.sp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sp-field{display:flex;flex-direction:column;gap:3px}
+.sp-field label{font-size:10.5px;color:var(--text-sec);font-weight:500}
+.sp-field input,.sp-field select{background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-pri);font-family:inherit;font-size:13px;padding:6px 9px;width:100%}
+.sp-field input:focus,.sp-field select:focus{outline:none;border-color:var(--amber)}
+.sp-field-full{grid-column:1/-1}
+.stage-select-wrap{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.stage-option-btn{font-size:11px;font-weight:500;padding:5px 10px;border-radius:100px;border:1.5px solid var(--border);background:var(--ground);color:var(--text-sec);cursor:pointer;transition:all .15s;white-space:nowrap}
+.stage-option-btn:hover{border-color:var(--amber);color:var(--text-pri)}
+.stage-option-btn.current{color:#fff;border-color:transparent}
+.assigned-grid{display:flex;flex-wrap:wrap;gap:6px}
+.assign-chip{display:flex;align-items:center;gap:5px;padding:5px 8px;border-radius:100px;border:1.5px solid var(--border);background:var(--ground);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s}
+.assign-chip.active{border-color:transparent;color:#fff}
+.assign-chip .av{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;flex-shrink:0}
+.doc-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.doc-item{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--ground);cursor:pointer;transition:background .15s;font-size:12px}
+.doc-item:hover{background:var(--green-bg)}
+.doc-item.received{background:var(--green-bg);border-color:var(--green)}
+.doc-item input[type=checkbox]{accent-color:var(--green);flex-shrink:0}
+.notes-area{width:100%;background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-pri);font-family:inherit;font-size:13px;padding:8px 10px;resize:vertical;min-height:80px;line-height:1.55}
+.notes-area:focus{outline:none;border-color:var(--amber)}
+.activity-feed{display:flex;flex-direction:column;gap:0;max-height:240px;overflow-y:auto}
+.act-row{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px}
+.act-ts{font-family:'DM Mono',monospace;font-size:10px;color:var(--text-faint);white-space:nowrap;padding-top:1px}
+.act-text{color:var(--text-pri);flex:1}
+.sp-save-bar{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0}
+.btn-save{background:var(--amber);color:#fff;border:none;font-family:inherit;font-size:13.5px;font-weight:600;padding:9px 20px;border-radius:var(--radius-sm);cursor:pointer;flex:1;transition:opacity .15s}
+.btn-save:hover{opacity:.88}
+.btn-cancel{background:var(--ground);border:1px solid var(--border);color:var(--text-sec);font-family:inherit;font-size:13.5px;padding:9px 16px;border-radius:var(--radius-sm);cursor:pointer}
+
+/* ── NEW JOB MODAL ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(22,32,64,.4);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal-overlay[hidden]{display:none!important}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:540px;box-shadow:var(--shadow);display:flex;flex-direction:column;max-height:90vh}
+.modal-hdr{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.modal-hdr h2{font-size:17px;font-weight:600}
+.modal-body{padding:22px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-field{display:flex;flex-direction:column;gap:4px}
+.form-field.full{grid-column:1/-1}
+.form-field label{font-size:11px;font-weight:600;color:var(--text-sec);text-transform:uppercase;letter-spacing:.06em}
+.form-field input,.form-field select{background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-pri);font-family:inherit;font-size:13.5px;padding:8px 10px}
+.form-field input:focus,.form-field select:focus{outline:none;border-color:var(--amber)}
+.modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0}
+.btn-primary{background:var(--amber);color:#fff;border:none;font-family:inherit;font-size:13.5px;font-weight:600;padding:9px 22px;border-radius:var(--radius-sm);cursor:pointer;flex:1;transition:opacity .15s}
+.btn-primary:hover{opacity:.88}
+.btn-secondary{background:var(--ground);border:1px solid var(--border);color:var(--text-sec);font-family:inherit;font-size:13.5px;padding:9px 18px;border-radius:var(--radius-sm);cursor:pointer}
+
+/* ── CONFIG BANNER ── */
+.config-banner{background:var(--amber-bg);border-bottom:1px solid var(--amber);padding:8px 16px;font-size:12.5px;color:var(--text-sec);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.config-banner strong{color:var(--amber)}
+.config-banner[hidden]{display:none!important}
+
+/* ── MISC ── */
+.mono{font-family:'DM Mono',monospace}
+@media(max-width:640px){
+  .topbar-nav{display:none}
+  .stats-strip{overflow-x:auto}
+  .modal-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- Config banner shown until API URL is set -->
+<div class="config-banner" id="configBanner">
+  <strong>⚙️ Setup needed:</strong>
+  Edit <code>index.html</code> line 1 of the script — set <code>API</code> to your Cloudflare Worker URL.
+</div>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <span class="topbar-brand">TFAM · TMS</span>
+  <div class="topbar-nav">
+    <button class="nav-btn active" onclick="switchView('dashboard')">📊 Dashboard</button>
+    <button class="nav-btn" onclick="switchView('staff')">👥 Staff</button>
+    <button class="nav-btn" onclick="switchView('log')">📜 Work Log</button>
+  </div>
+  <div class="topbar-right">
+    <span class="live-dot" id="liveDot" title="Live sync"></span>
+    <select class="user-sel" id="userSel" onchange="onUserChange()">
+      <option value="">— Who are you? —</option>
+    </select>
+    <button class="btn-new" onclick="openNewJob()">+ New Job</button>
+  </div>
+</div>
+
+<!-- Stats Strip -->
+<div class="stats-strip" id="statsStrip"></div>
+
+<!-- ── DASHBOARD VIEW ── -->
+<div class="view active" id="view-dashboard">
+  <div class="kanban-wrap">
+    <div class="kanban" id="kanban"></div>
+  </div>
+</div>
+
+<!-- ── STAFF VIEW ── -->
+<div class="view" id="view-staff">
+  <div class="staff-wrap">
+    <div class="staff-grid" id="staffGrid"></div>
+  </div>
+</div>
+
+<!-- ── WORK LOG VIEW ── -->
+<div class="view" id="view-log">
+  <div class="log-wrap">
+    <div class="log-toolbar">
+      <select class="log-filter-sel" id="logMemberFilter" onchange="renderLog()">
+        <option value="">All members</option>
+      </select>
+      <select class="log-filter-sel" id="logJobFilter" onchange="renderLog()">
+        <option value="">All jobs</option>
+      </select>
+    </div>
+    <div class="log-list" id="logList"></div>
+  </div>
+</div>
+
+<!-- ── SIDE PANEL ── -->
+<div class="overlay" id="overlay" onclick="closePanel()"></div>
+<div class="side-panel" id="sidePanel">
+  <div class="sp-topbar">
+    <span class="sp-job-id" id="sp-id"></span>
+    <span class="sp-title" id="sp-title"></span>
+    <button class="sp-close" onclick="closePanel()">✕</button>
+  </div>
+  <div class="sp-body" id="spBody"></div>
+  <div class="sp-save-bar">
+    <button class="btn-save" onclick="saveJob()">Save Changes</button>
+    <button class="btn-cancel" onclick="closePanel()">Cancel</button>
+  </div>
+</div>
+
+<!-- ── NEW JOB MODAL ── -->
+<div class="modal-overlay" id="newJobModal" hidden onclick="e=>e.target===this&&closeNewJob()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>New Claim Job</h2>
+      <button class="sp-close" onclick="closeNewJob()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Job Title / Short Description *</label>
+          <input id="nj-title" placeholder="e.g. Kalyani Textiles — Fire Loss" required>
+        </div>
+        <div class="form-field">
+          <label>Insurer</label>
+          <input id="nj-insurer" placeholder="e.g. New India Assurance">
+        </div>
+        <div class="form-field">
+          <label>Insured Name</label>
+          <input id="nj-insured" placeholder="e.g. M/s Kalyani Textiles">
+        </div>
+        <div class="form-field">
+          <label>Policy No.</label>
+          <input id="nj-policy">
+        </div>
+        <div class="form-field">
+          <label>Claim No.</label>
+          <input id="nj-claim">
+        </div>
+        <div class="form-field">
+          <label>Peril / Type of Loss</label>
+          <input id="nj-peril" placeholder="e.g. Fire, Burglary, EAR">
+        </div>
+        <div class="form-field">
+          <label>Approx. Claim Amount (₹)</label>
+          <input id="nj-amount" placeholder="e.g. 45,00,000">
+        </div>
+        <div class="form-field">
+          <label>Date of Loss</label>
+          <input id="nj-dol" type="date">
+        </div>
+        <div class="form-field">
+          <label>Date of Intimation</label>
+          <input id="nj-doi" type="date">
+        </div>
+        <div class="form-field full">
+          <label>Assign To</label>
+          <div class="assigned-grid" id="nj-assign"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitNewJob()">Create Job</button>
+      <button class="btn-secondary" onclick="closeNewJob()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// CONFIG — set your Worker URL after deploy
+// ══════════════════════════════════════════════════════════════
+const API = 'https://tms-worker.tfamisla.workers.dev';
+// Example: const API = 'https://tms-worker.your-name.workers.dev';
+
+// ── TEAM ─────────────────────────────────────────────────────
+const TEAM = [
+  { id:'rajan',    name:'Raja Naren R',        initials:'RN', role:'Director',          color:'#1B2E5A' },
+  { id:'thiravia', name:'Raja Thiravia Kumar', initials:'RT', role:'Director',          color:'#1A4FA0' },
+  { id:'surv1',    name:'Employee Surveyor 1', initials:'S1', role:'Employee Surveyor', color:'#1A7A4A' },
+  { id:'surv2',    name:'Employee Surveyor 2', initials:'S2', role:'Employee Surveyor', color:'#7C3AED' },
+  { id:'train1',   name:'Trainee Surveyor 1',  initials:'T1', role:'Trainee Surveyor',  color:'#0284C7' },
+  { id:'train2',   name:'Trainee Surveyor 2',  initials:'T2', role:'Trainee Surveyor',  color:'#D97706' },
+  { id:'back1',    name:'Backend Staff 1',      initials:'B1', role:'Backend Staff',     color:'#BE185D' },
+  { id:'back2',    name:'Backend Staff 2',      initials:'B2', role:'Backend Staff',     color:'#059669' },
+  { id:'back3',    name:'Backend Staff 3',      initials:'B3', role:'Backend Staff',     color:'#B45309' },
+  { id:'back4',    name:'Backend Staff 4',      initials:'B4', role:'Backend Staff',     color:'#6B7AFF' },
+];
+
+// ── STAGES ───────────────────────────────────────────────────
+const STAGES = [
+  { id:'new_claim',           label:'New Claim Received',     color:'#6B7AFF' },
+  { id:'awaiting_inspection', label:'Awaiting Inspection',    color:'#F59E0B' },
+  { id:'inspection_done',     label:'Inspection Completed',   color:'#10B981' },
+  { id:'ila_lor_issued',      label:'ILA & LOR Issued',       color:'#8B5CF6' },
+  { id:'awaiting_docs',       label:'Awaiting Documents',     color:'#EF4444' },
+  { id:'assessment_prep',     label:'Assessment Preparation', color:'#0EA5E9' },
+  { id:'assessment_approval', label:'Assessment Approval',    color:'#F97316' },
+  { id:'fsr_prep',            label:'FSR Preparation',        color:'#06B6D4' },
+  { id:'fsr_verification',    label:'FSR Verification',       color:'#22C55E' },
+  { id:'fsr_dispatch',        label:'FSR Print & Dispatch',   color:'#3B82F6' },
+  { id:'query',               label:'Query',                  color:'#D97706' },
+  { id:'bill_pending',        label:'Bill Pending',           color:'#EC4899' },
+  { id:'closed',              label:'Closed',                 color:'#6B7280' },
+];
+
+const DOCS = [
+  'Claim Form','Survey Appointment Letter','Policy Copy','FIR / Police Report',
+  'Purchase Invoice','Stock Register','Photographs','Repair Estimate',
+  'Audited Financials','Books of Account','Cargo Documents','Other Documents',
+];
+
+// ── STATE ─────────────────────────────────────────────────────
+let jobs = [];
+let log  = [];
+let currentUser = localStorage.getItem('tms_user') || '';
+let stageFilter = null;
+let openJobId   = null;
+let pollTimer   = null;
+let apiReady    = API !== 'YOUR_WORKER_URL_HERE';
+
+// ── INIT ──────────────────────────────────────────────────────
+(function init() {
+  if (!apiReady) {
+    document.getElementById('configBanner').hidden = false;
+    document.getElementById('liveDot').classList.add('offline');
+  } else {
+    document.getElementById('configBanner').hidden = true;
+  }
+  buildUserSel();
+  buildNewJobAssign();
+  buildLogFilters();
+  if (apiReady) {
+    fetchAll();
+    pollTimer = setInterval(fetchAll, 5000);
+  } else {
+    // Demo mode — render empty state
+    renderAll();
+  }
+})();
+
+// ── API CALLS ─────────────────────────────────────────────────
+async function fetchAll() {
+  try {
+    const [jRes, lRes] = await Promise.all([
+      fetch(API + '/api/jobs'),
+      fetch(API + '/api/log'),
+    ]);
+    if (!jRes.ok || !lRes.ok) throw new Error('bad response');
+    jobs = await jRes.json();
+    log  = await lRes.json();
+    setOnline(true);
+    renderAll();
+  } catch(e) {
+    setOnline(false);
+  }
+}
+
+async function apiPost(path, body) {
+  const r = await fetch(API + path, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function apiPatch(path, body) {
+  const r = await fetch(API + path, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function setOnline(on) {
+  document.getElementById('liveDot').classList.toggle('offline', !on);
+}
+
+// ── RENDER ALL ────────────────────────────────────────────────
+function renderAll() {
+  renderStats();
+  renderKanban();
+  renderStaff();
+  renderLog();
+}
+
+// ── STATS STRIP ───────────────────────────────────────────────
+function renderStats() {
+  const counts = {};
+  STAGES.forEach(s => counts[s.id] = 0);
+  jobs.forEach(j => { if (counts[j.stage] !== undefined) counts[j.stage]++; });
+
+  const active = jobs.filter(j => j.stage !== 'closed').length;
+  const closed = jobs.filter(j => j.stage === 'closed').length;
+
+  const tiles = [
+    { label:'Total Active', val: active, filter: '__active__' },
+    { label:'Awaiting Docs', val: counts['awaiting_docs'], filter:'awaiting_docs' },
+    { label:'Bill Pending',  val: counts['bill_pending'],  filter:'bill_pending'  },
+    { label:'Closed',        val: closed, filter:'closed' },
+    { label:'Query',         val: counts['query'],         filter:'query'         },
+  ];
+
+  document.getElementById('statsStrip').innerHTML = tiles.map(t => `
+    <div class="stat-tile ${stageFilter === t.filter ? 'active-filter' : ''}"
+         onclick="toggleFilter('${t.filter}')">
+      <div class="stat-num">${t.val}</div>
+      <div class="stat-lbl">${t.label}</div>
+    </div>`).join('');
+}
+
+function toggleFilter(f) {
+  stageFilter = (stageFilter === f) ? null : f;
+  renderAll();
+}
+
+function filteredJobs() {
+  if (!stageFilter) return jobs;
+  if (stageFilter === '__active__') return jobs.filter(j => j.stage !== 'closed');
+  return jobs.filter(j => j.stage === stageFilter);
+}
+
+// ── KANBAN ────────────────────────────────────────────────────
+function renderKanban() {
+  const shown = filteredJobs();
+  const byStage = {};
+  STAGES.forEach(s => byStage[s.id] = []);
+  shown.forEach(j => { if (byStage[j.stage]) byStage[j.stage].push(j); });
+
+  document.getElementById('kanban').innerHTML = STAGES.map(s => {
+    const cards = byStage[s.id];
+    return `
+    <div class="k-col">
+      <div class="k-col-hdr">
+        <span class="k-stage-dot" style="background:${s.color}"></span>
+        <span class="k-stage-name">${s.label}</span>
+        <span class="k-count">${cards.length}</span>
+      </div>
+      <div class="k-cards">
+        ${cards.length === 0
+          ? '<div class="empty-col">—</div>'
+          : cards.map(j => jobCard(j)).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function jobCard(j) {
+  const avatars = (j.assigned || [])
+    .map(id => teamMember(id))
+    .filter(Boolean)
+    .map(m => `<div class="avatar" style="background:${m.color}" title="${m.name}">${m.initials}</div>`)
+    .join('');
+  return `
+  <div class="k-card" onclick="openJob('${j.id}')">
+    <div class="k-card-id">${j.id}</div>
+    <div class="k-card-title">${esc(j.title)}</div>
+    ${j.insurer ? `<div class="k-card-meta">${esc(j.insurer)}</div>` : ''}
+    ${avatars ? `<div class="k-card-avatars">${avatars}</div>` : ''}
+  </div>`;
+}
+
+// ── STAFF VIEW ────────────────────────────────────────────────
+function renderStaff() {
+  document.getElementById('staffGrid').innerHTML = TEAM.map(m => {
+    const myJobs = jobs.filter(j => (j.assigned || []).includes(m.id));
+    const rows = myJobs.map(j => {
+      const s = STAGES.find(s => s.id === j.stage) || STAGES[0];
+      return `
+      <div class="staff-job-row" onclick="openJob('${j.id}')">
+        <span class="staff-job-id">${j.id}</span>
+        <span class="staff-job-title">${esc(j.title)}</span>
+        <span class="stage-badge" style="color:${s.color};border-color:${s.color}22">${s.label}</span>
+      </div>`;
+    }).join('');
+    return `
+    <div class="staff-card">
+      <div class="staff-hdr">
+        <div class="staff-avatar" style="background:${m.color}">${m.initials}</div>
+        <div>
+          <div class="staff-name">${m.name}</div>
+          <div class="staff-role">${m.role}</div>
+        </div>
+        <div class="staff-job-count">${myJobs.length} job${myJobs.length !== 1 ? 's' : ''}</div>
+      </div>
+      <div class="staff-jobs">
+        ${rows || '<div style="font-size:11px;color:var(--text-faint);padding:4px 0">No active jobs</div>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── WORK LOG ─────────────────────────────────────────────────
+function buildLogFilters() {
+  const mSel = document.getElementById('logMemberFilter');
+  TEAM.forEach(m => {
+    const o = document.createElement('option');
+    o.value = m.id; o.textContent = m.name;
+    mSel.appendChild(o);
+  });
+}
+
+function renderLog() {
+  const mf = document.getElementById('logMemberFilter').value;
+  const jf = document.getElementById('logJobFilter').value;
+
+  // Rebuild job filter options
+  const jSel = document.getElementById('logJobFilter');
+  const curJf = jSel.value;
+  jSel.innerHTML = '<option value="">All jobs</option>';
+  jobs.forEach(j => {
+    const o = document.createElement('option');
+    o.value = j.id; o.textContent = `${j.id} — ${j.title}`;
+    jSel.appendChild(o);
+  });
+  jSel.value = curJf;
+
+  let entries = [...log];
+  if (mf) entries = entries.filter(e => e.actor === mf);
+  if (jf) entries = entries.filter(e => e.job_id === jf);
+
+  document.getElementById('logList').innerHTML = entries.length === 0
+    ? '<div style="padding:20px 0;color:var(--text-faint);font-size:13px">No entries found.</div>'
+    : entries.map(e => {
+        const m = teamMember(e.actor);
+        const ts = e.ts ? new Date(e.ts).toLocaleString('en-IN', {
+          day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'
+        }) : '—';
+        return `
+        <div class="log-entry">
+          <span class="log-ts">${ts}</span>
+          <span class="log-actor">${m ? m.initials : (e.actor||'—')}</span>
+          <span class="log-text">
+            ${esc(e.text)}
+            ${e.job_id ? `<span class="log-job-link" onclick="openJob('${e.job_id}')">${e.job_id}</span>` : ''}
+          </span>
+        </div>`;
+      }).join('');
+}
+
+// ── SIDE PANEL ────────────────────────────────────────────────
+function openJob(id) {
+  const j = jobs.find(j => j.id === id);
+  if (!j) return;
+  openJobId = id;
+
+  document.getElementById('sp-id').textContent    = j.id;
+  document.getElementById('sp-title').textContent = j.title;
+
+  const body = document.getElementById('spBody');
+  body.innerHTML = buildJobPanel(j);
+
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('sidePanel').classList.add('open');
+}
+
+function closePanel() {
+  openJobId = null;
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('sidePanel').classList.remove('open');
+}
+
+function buildJobPanel(j) {
+  const stageButtons = STAGES.map(s => `
+    <button class="stage-option-btn ${j.stage === s.id ? 'current' : ''}"
+            style="${j.stage === s.id ? `background:${s.color}` : ''}"
+            onclick="setPanelStage('${s.id}','${s.label}')"
+            data-stage="${s.id}">
+      ${s.label}
+    </button>`).join('');
+
+  const assignChips = TEAM.map(m => `
+    <div class="assign-chip ${(j.assigned||[]).includes(m.id) ? 'active' : ''}"
+         style="${(j.assigned||[]).includes(m.id) ? `background:${m.color};border-color:${m.color}` : ''}"
+         onclick="toggleAssign('${m.id}')" data-member="${m.id}">
+      <div class="av" style="background:${m.color}">${m.initials}</div>
+      ${m.name}
+    </div>`).join('');
+
+  const docItems = DOCS.map(d => {
+    const key = d.replace(/[^a-z0-9]/gi,'_').toLowerCase();
+    const received = !!(j.docs && j.docs[key]);
+    return `
+    <div class="doc-item ${received ? 'received' : ''}" onclick="toggleDoc('${key}','${d}')" data-doc="${key}">
+      <input type="checkbox" ${received ? 'checked' : ''} onclick="event.stopPropagation();toggleDoc('${key}','${d}')">
+      ${d}
+    </div>`;
+  }).join('');
+
+  const actFeed = [...(j.activity||[])].reverse().map(a => {
+    const m = teamMember(a.actor);
+    const ts = new Date(a.ts).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    return `<div class="act-row"><span class="act-ts">${ts}<br>${m?m.initials:''}</span><span class="act-text">${esc(a.text)}</span></div>`;
+  }).join('');
+
+  return `
+  <!-- Stage -->
+  <div class="sp-section">
+    <div class="sp-section-label">Pipeline Stage</div>
+    <div class="stage-select-wrap" id="sp-stage-wrap">${stageButtons}</div>
+  </div>
+
+  <!-- Assign -->
+  <div class="sp-section">
+    <div class="sp-section-label">Assigned To</div>
+    <div class="assigned-grid" id="sp-assign-grid">${assignChips}</div>
+  </div>
+
+  <!-- Job Details -->
+  <div class="sp-section">
+    <div class="sp-section-label">Job Details</div>
+    <div class="sp-grid">
+      <div class="sp-field sp-field-full">
+        <label>Title</label>
+        <input id="sp-f-title" value="${esc(j.title)}">
+      </div>
+      <div class="sp-field"><label>Insurer</label><input id="sp-f-insurer" value="${esc(j.insurer||'')}"></div>
+      <div class="sp-field"><label>Insured</label><input id="sp-f-insured" value="${esc(j.insured||'')}"></div>
+      <div class="sp-field"><label>Policy No.</label><input id="sp-f-policy" value="${esc(j.policy_no||'')}"></div>
+      <div class="sp-field"><label>Claim No.</label><input id="sp-f-claim" value="${esc(j.claim_no||'')}"></div>
+      <div class="sp-field"><label>Peril</label><input id="sp-f-peril" value="${esc(j.peril||'')}"></div>
+      <div class="sp-field"><label>Claim Amount (₹)</label><input id="sp-f-amount" value="${esc(j.claim_amount||'')}"></div>
+      <div class="sp-field"><label>Date of Loss</label><input type="date" id="sp-f-dol" value="${j.date_loss||''}"></div>
+      <div class="sp-field"><label>Date of Intimation</label><input type="date" id="sp-f-doi" value="${j.date_intimation||''}"></div>
+      <div class="sp-field"><label>Survey Date</label><input type="date" id="sp-f-survey" value="${j.survey_date||''}"></div>
+      <div class="sp-field"><label>Appointment Date</label><input type="date" id="sp-f-appt" value="${j.appointment_date||''}"></div>
+      <div class="sp-field"><label>Appointment</label>
+        <select id="sp-f-appt-conf">
+          <option value="0" ${!j.appointment_confirmed?'selected':''}>Pending</option>
+          <option value="1" ${j.appointment_confirmed?'selected':''}>Confirmed</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Documents -->
+  <div class="sp-section">
+    <div class="sp-section-label">Document Checklist</div>
+    <div class="doc-grid">${docItems}</div>
+  </div>
+
+  <!-- Notes -->
+  <div class="sp-section">
+    <div class="sp-section-label">Notes</div>
+    <textarea class="notes-area" id="sp-f-notes" placeholder="Add notes...">${esc(j.notes||'')}</textarea>
+  </div>
+
+  <!-- Activity -->
+  <div class="sp-section">
+    <div class="sp-section-label">Activity Log</div>
+    <div class="activity-feed">${actFeed || '<div style="font-size:12px;color:var(--text-faint)">No activity yet.</div>'}</div>
+  </div>`;
+}
+
+// Panel interactions (in-memory, saved on Save)
+let panelState = {};
+
+function setPanelStage(id, label) {
+  panelState.stage = id;
+  panelState.stage_label = label;
+  document.querySelectorAll('.stage-option-btn').forEach(b => {
+    const s = STAGES.find(s => s.id === b.dataset.stage);
+    if (b.dataset.stage === id) {
+      b.classList.add('current');
+      b.style.background = s ? s.color : '';
+    } else {
+      b.classList.remove('current');
+      b.style.background = '';
+    }
+  });
+}
+
+function toggleAssign(memberId) {
+  const j = jobs.find(j => j.id === openJobId);
+  if (!j) return;
+  let assigned = panelState.assigned !== undefined ? [...panelState.assigned] : [...(j.assigned||[])];
+  if (assigned.includes(memberId)) {
+    assigned = assigned.filter(id => id !== memberId);
+  } else {
+    assigned.push(memberId);
+  }
+  panelState.assigned = assigned;
+  const m = teamMember(memberId);
+  document.querySelectorAll('[data-member]').forEach(el => {
+    const mid = el.dataset.member;
+    const tm  = teamMember(mid);
+    const active = assigned.includes(mid);
+    el.classList.toggle('active', active);
+    el.style.background   = active ? tm.color : '';
+    el.style.borderColor  = active ? tm.color : '';
+  });
+}
+
+function toggleDoc(key, label) {
+  const j = jobs.find(j => j.id === openJobId);
+  if (!j) return;
+  const docs = panelState.docs !== undefined ? {...panelState.docs} : {...(j.docs||{})};
+  docs[key] = !docs[key];
+  panelState.docs = docs;
+  const el = document.querySelector(`[data-doc="${key}"]`);
+  if (el) {
+    el.classList.toggle('received', docs[key]);
+    const cb = el.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = docs[key];
+  }
+}
+
+async function saveJob() {
+  const j = jobs.find(j => j.id === openJobId);
+  if (!j || !apiReady) { alert('API not configured.'); return; }
+
+  const actor = currentUser || 'unknown';
+  const actEntries = [];
+  const updates = {};
+
+  const stage = panelState.stage || j.stage;
+  if (stage !== j.stage) {
+    const sLabel = (STAGES.find(s => s.id === stage)||{label:stage}).label;
+    actEntries.push({ text:`Stage moved to "${sLabel}"`, ts:Date.now(), actor });
+    updates.stage = stage;
+  }
+
+  if (panelState.assigned !== undefined) updates.assigned = panelState.assigned;
+  if (panelState.docs !== undefined) updates.docs = panelState.docs;
+
+  const title  = document.getElementById('sp-f-title')?.value.trim();
+  const notes  = document.getElementById('sp-f-notes')?.value;
+
+  if (title !== j.title)  { updates.title = title; actEntries.push({text:`Title updated`,ts:Date.now(),actor}); }
+  if (notes !== j.notes)  { updates.notes = notes; actEntries.push({text:`Notes updated`, ts:Date.now(),actor}); }
+
+  updates.insurer       = document.getElementById('sp-f-insurer')?.value;
+  updates.insured       = document.getElementById('sp-f-insured')?.value;
+  updates.policy_no     = document.getElementById('sp-f-policy')?.value;
+  updates.claim_no      = document.getElementById('sp-f-claim')?.value;
+  updates.peril         = document.getElementById('sp-f-peril')?.value;
+  updates.claim_amount  = document.getElementById('sp-f-amount')?.value;
+  updates.date_loss     = document.getElementById('sp-f-dol')?.value;
+  updates.date_intimation = document.getElementById('sp-f-doi')?.value;
+  updates.survey_date   = document.getElementById('sp-f-survey')?.value;
+  updates.appointment_date = document.getElementById('sp-f-appt')?.value;
+  updates.appointment_confirmed = document.getElementById('sp-f-appt-conf')?.value === '1';
+
+  if (actEntries.length === 0) actEntries.push({text:'Job updated', ts:Date.now(), actor});
+
+  try {
+    const updated = await apiPatch('/api/jobs/' + encodeURIComponent(j.id), {
+      ...updates, activity_add: actEntries
+    });
+    // Update local state
+    jobs = jobs.map(jj => jj.id === j.id ? updated : jj);
+    panelState = {};
+    closePanel();
+    renderAll();
+  } catch(e) {
+    alert('Save failed: ' + e.message);
+  }
+}
+
+// ── NEW JOB ───────────────────────────────────────────────────
+function buildNewJobAssign() {
+  document.getElementById('nj-assign').innerHTML = TEAM.map(m => `
+    <div class="assign-chip" style="" onclick="toggleNjAssign('${m.id}',this)" data-member="${m.id}">
+      <div class="av" style="background:${m.color}">${m.initials}</div>
+      ${m.name}
+    </div>`).join('');
+}
+
+function toggleNjAssign(id, el) {
+  el.classList.toggle('active');
+  const m = teamMember(id);
+  if (el.classList.contains('active')) {
+    el.style.background  = m.color;
+    el.style.borderColor = m.color;
+    el.style.color       = '#fff';
+  } else {
+    el.style.background  = '';
+    el.style.borderColor = '';
+    el.style.color       = '';
+  }
+}
+
+function openNewJob()  { document.getElementById('newJobModal').hidden = false; }
+function closeNewJob() { document.getElementById('newJobModal').hidden = true; }
+
+async function submitNewJob() {
+  const title = document.getElementById('nj-title').value.trim();
+  if (!title) { alert('Job title is required.'); return; }
+  if (!apiReady) { alert('API not configured. Set the API URL in index.html first.'); return; }
+
+  const assigned = [...document.querySelectorAll('#nj-assign [data-member].active')]
+    .map(el => el.dataset.member);
+
+  const body = {
+    title,
+    insurer:         document.getElementById('nj-insurer').value,
+    insured:         document.getElementById('nj-insured').value,
+    policy_no:       document.getElementById('nj-policy').value,
+    claim_no:        document.getElementById('nj-claim').value,
+    peril:           document.getElementById('nj-peril').value,
+    claim_amount:    document.getElementById('nj-amount').value,
+    date_loss:       document.getElementById('nj-dol').value,
+    date_intimation: document.getElementById('nj-doi').value,
+    assigned,
+    created_by: currentUser || 'unknown',
+  };
+
+  try {
+    const newJob = await apiPost('/api/jobs', body);
+    jobs = [newJob, ...jobs];
+    log  = [{ job_id: newJob.id, text: `Job ${newJob.id} created`, ts: Date.now(), actor: currentUser||'unknown' }, ...log];
+    closeNewJob();
+    renderAll();
+    // Clear form
+    ['nj-title','nj-insurer','nj-insured','nj-policy','nj-claim','nj-peril','nj-amount','nj-dol','nj-doi']
+      .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+    document.querySelectorAll('#nj-assign .assign-chip').forEach(el => {
+      el.classList.remove('active');
+      el.style.background = el.style.borderColor = el.style.color = '';
+    });
+  } catch(e) {
+    alert('Error creating job: ' + e.message);
+  }
+}
+
+// ── VIEWS ─────────────────────────────────────────────────────
+function switchView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().includes(name.slice(0,4))));
+}
+
+// ── USER ──────────────────────────────────────────────────────
+function buildUserSel() {
+  const sel = document.getElementById('userSel');
+  TEAM.forEach(m => {
+    const o = document.createElement('option');
+    o.value = m.id; o.textContent = m.name;
+    sel.appendChild(o);
+  });
+  sel.value = currentUser;
+}
+function onUserChange() {
+  currentUser = document.getElementById('userSel').value;
+  localStorage.setItem('tms_user', currentUser);
+}
+
+// ── HELPERS ───────────────────────────────────────────────────
+function teamMember(id) { return TEAM.find(m => m.id === id); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+</script>
+</body>
+</html>
