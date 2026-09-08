@@ -236,9 +236,9 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
 <div class="topbar">
   <span class="topbar-brand">TFAM · TMS</span>
   <div class="topbar-nav">
-    <button class="nav-btn active" onclick="switchView('dashboard')">📊 Dashboard</button>
-    <button class="nav-btn" onclick="switchView('staff')">👥 Staff</button>
-    <button class="nav-btn" onclick="switchView('log')">📜 Work Log</button>
+    <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
+    <button class="nav-btn" data-view="staff" onclick="switchView('staff')">🛠 Admin</button>
+    <button class="nav-btn" data-view="log" onclick="switchView('log')">📜 Work Log</button>
   </div>
   <div class="topbar-right">
     <span class="live-dot" id="liveDot" title="Live sync"></span>
@@ -1006,8 +1006,12 @@ function buildJobPanel(j) {
       ${s.label}
     </button>`).join('');
 
-  const directorChips  = chipsHtml(TEAM, j.director_ids||[]);
-  const surveyorChips  = chipsHtml(TEAM, j.surveyor_ids||[]);
+  // Filter by role, but always keep anyone already assigned visible/selected
+  // even if they wouldn't pass the filter today — never silently drop data.
+  const directorOptions = TEAM.filter(m => isDirector(m) || (j.director_ids||[]).includes(m.id));
+  const surveyorOptions = TEAM.filter(m => canSignSurvey(m) || (j.surveyor_ids||[]).includes(m.id));
+  const directorChips  = chipsHtml(directorOptions, j.director_ids||[]);
+  const surveyorChips  = chipsHtml(surveyorOptions, j.surveyor_ids||[]);
   const branchChips    = chipsHtml(BRANCHES, j.branch_ids||[]);
   const backstaffChips = chipsHtml(TEAM, j.backstaff_ids||[]);
 
@@ -1233,8 +1237,8 @@ async function saveJob() {
 
 // ── NEW JOB ───────────────────────────────────────────────────
 function buildNewJobAssign() {
-  document.getElementById('nj-assign-director').innerHTML  = chipsHtml(TEAM);
-  document.getElementById('nj-assign-surveyor').innerHTML  = chipsHtml(TEAM);
+  document.getElementById('nj-assign-director').innerHTML  = chipsHtml(TEAM.filter(isDirector));
+  document.getElementById('nj-assign-surveyor').innerHTML  = chipsHtml(TEAM.filter(canSignSurvey));
   document.getElementById('nj-assign-branch').innerHTML    = chipsHtml(BRANCHES);
   document.getElementById('nj-assign-backstaff').innerHTML = chipsHtml(TEAM);
 }
@@ -1537,12 +1541,24 @@ async function deleteBranchEntry() {
 // ── VIEWS ─────────────────────────────────────────────────────
 function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().includes(name.slice(0,4))));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
 function teamMember(id) { return TEAM.find(m => m.id === id); }
 function branchMember(id) { return BRANCHES.find(b => b.id === id); }
+
+// Role classification for the assignment selectors — driven by the actual
+// staff.role text values found in the database ("Director", "Employee
+// Surveyor", "Trainee Surveyor", "Backend Staff"), tolerant of case and
+// whitespace variation but never guessing beyond what's stored.
+function normRole(role) { return String(role || '').trim().toLowerCase(); }
+function isDirector(m) { return normRole(m.role).includes('director'); }
+function isTrainee(m) { return normRole(m.role).includes('trainee'); }
+function isSurveyor(m) { return normRole(m.role).includes('surveyor'); }
+// Directors and non-trainee surveyors may sign a survey report; trainees
+// and backend staff must never appear as a signing surveyor.
+function canSignSurvey(m) { return isDirector(m) || (isSurveyor(m) && !isTrainee(m)); }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 </script>
 </body>

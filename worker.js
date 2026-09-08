@@ -81,6 +81,25 @@ async function uniqueId(db, table, base) {
   return id;
 }
 
+async function validateIdsExist(db, table, ids, label) {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(',');
+  const { results } = await db.prepare(`SELECT id FROM ${table} WHERE id IN (${placeholders})`).bind(...ids).all();
+  const found = new Set(results.map(r => r.id));
+  const missing = ids.filter(id => !found.has(id));
+  if (missing.length > 0) throw new Error(`Unknown ${label}: ${missing.join(', ')}`);
+}
+
+// Validates the 4 responsibility-allocation arrays reference real staff/branch
+// rows before they're written, without enforcing role-based rules server-side
+// (that's a UI concern — the selectors already filter by role).
+async function validateJobAssignments(db, body) {
+  if (body.director_ids !== undefined) await validateIdsExist(db, 'staff', body.director_ids, 'staff id (director)');
+  if (body.surveyor_ids !== undefined) await validateIdsExist(db, 'staff', body.surveyor_ids, 'staff id (surveyor)');
+  if (body.backstaff_ids !== undefined) await validateIdsExist(db, 'staff', body.backstaff_ids, 'staff id (backstaff)');
+  if (body.branch_ids !== undefined) await validateIdsExist(db, 'branches', body.branch_ids, 'branch id');
+}
+
 async function listJobs(db) {
   const { results } = await db.prepare('SELECT * FROM jobs ORDER BY updated_at DESC').all();
   return results.map(rowToJob);
@@ -100,6 +119,7 @@ async function listLog(db) {
 
 async function createJob(db, body) {
   if (!body || !body.title || !body.title.trim()) throw new Error('title is required');
+  await validateJobAssignments(db, body);
 
   let id;
   if (body.id && body.id.trim()) {
@@ -145,6 +165,7 @@ async function createJob(db, body) {
 async function updateJob(db, id, body) {
   const existing = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
   if (!existing) throw new Error('job not found');
+  await validateJobAssignments(db, body);
 
   const sets = [];
   const values = [];
@@ -454,8 +475,8 @@ async function createBranch(db, body) {
   if (!body || !body.name || !body.name.trim()) throw new Error('name is required');
 
   const name = body.name.trim();
-  const existing = await db.prepare('SELECT * FROM branches WHERE name = ? COLLATE NOCASE').bind(name).first();
-  if (existing) return existing;
+  const existing = await db.prepare('SELECT 1 FROM branches WHERE name = ? COLLATE NOCASE').bind(name).first();
+  if (existing) throw new Error(`A branch named "${name}" already exists`);
 
   const id = await uniqueId(db, 'branches', slugify(name));
   const now = Date.now();
@@ -479,7 +500,12 @@ async function updateBranch(db, id, body) {
   for (const field of BRANCH_UPDATABLE_FIELDS) {
     if (body[field] === undefined) continue;
     const value = String(body[field]).trim();
-    if (field === 'name' && !value) throw new Error('name is required');
+    if (field === 'name') {
+      if (!value) throw new Error('name is required');
+      const dup = await db.prepare('SELECT 1 FROM branches WHERE name = ? COLLATE NOCASE AND id != ?')
+        .bind(value, id).first();
+      if (dup) throw new Error(`A branch named "${value}" already exists`);
+    }
     sets.push(`${field} = ?`);
     values.push(value);
   }
