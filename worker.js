@@ -2,24 +2,34 @@
 // Backs the index.html frontend via the TMS_DB D1 database (see schema.sql).
 
 // assigned = legacy catch-all list, kept for backward compatibility with
-// jobs created before the 4-category assignment split.
+// jobs created before the 4-category assignment split. contact_person/
+// contact_phone/appointing_office = legacy single-value fields, superseded
+// by `contacts` (multi-contact) and the split appointing_office_* fields —
+// all kept as columns for backward compatibility but no longer written by
+// the frontend.
 const JSON_FIELDS = [
-  'assigned', 'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'docs', 'activity',
+  'assigned', 'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'contacts', 'docs', 'activity',
 ];
-const JOB_ARRAY_FIELDS = ['assigned', 'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'docs'];
+const JOB_ARRAY_FIELDS = [
+  'assigned', 'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'contacts', 'docs',
+];
 
 // Plain free-text job fields — settable both at creation and via PATCH.
 const JOB_TEXT_FIELDS = [
-  'insurer', 'insured', 'policy_no', 'policy_name', 'policy_period_from', 'policy_period_to', 'claim_no', 'peril',
-  'claim_amount', 'estimated_loss', 'gross_loss', 'department', 'appointing_office',
-  'appointing_person', 'contact_person', 'contact_phone', 'address', 'district',
+  'insurer', 'insurer_branch',
+  'appointing_office_address', 'appointing_office_district', 'appointing_office_state',
+  'appointing_person', 'appointing_person_email', 'appointing_person_phone',
+  'insured', 'address', 'district', 'insured_state', 'insured_pincode',
+  'deputation_mode',
+  'policy_no', 'policy_name', 'policy_period_from', 'policy_period_to', 'claim_no', 'peril',
+  'claim_amount', 'estimated_loss', 'gross_loss', 'department',
   'date_loss', 'date_intimation',
 ];
 
 const UPDATABLE_FIELDS = [
   'title', ...JOB_TEXT_FIELDS, 'survey_date',
   'appointment_date', 'appointment_confirmed', 'stage',
-  'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids',
+  'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'contacts',
   'notes', 'docs',
 ];
 
@@ -146,6 +156,7 @@ async function createJob(db, body) {
     surveyor_ids: JSON.stringify(Array.isArray(body.surveyor_ids) ? body.surveyor_ids : []),
     branch_ids: JSON.stringify(Array.isArray(body.branch_ids) ? body.branch_ids : []),
     backstaff_ids: JSON.stringify(Array.isArray(body.backstaff_ids) ? body.backstaff_ids : []),
+    contacts: JSON.stringify(Array.isArray(body.contacts) ? body.contacts : []),
     notes: '',
     docs: JSON.stringify({}),
     activity: JSON.stringify(activity),

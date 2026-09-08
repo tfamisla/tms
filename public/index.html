@@ -172,6 +172,15 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
 .form-field input,.form-field select{background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-pri);font-family:inherit;font-size:13.5px;padding:8px 10px}
 .form-field input:focus,.form-field select:focus{outline:none;border-color:var(--amber)}
 .modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0}
+.modal-section-label{grid-column:1/-1;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--amber);border-top:1px solid var(--border);padding-top:14px;margin-top:2px}
+.modal-section-label:first-child{border-top:none;padding-top:0;margin-top:0}
+.contact-card{grid-column:1/-1;display:flex;gap:8px;align-items:flex-start;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;background:var(--ground)}
+.contact-card-grid{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.contact-card-grid input{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-pri);font-family:inherit;font-size:12.5px;padding:6px 8px}
+.contact-remove-btn{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0}
+.contact-remove-btn:hover{color:var(--red)}
+.btn-add-contact{grid-column:1/-1;background:none;border:1px dashed var(--border);color:var(--text-sec);font-family:inherit;font-size:12px;padding:6px 10px;border-radius:var(--radius-sm);cursor:pointer;width:100%}
+.btn-add-contact:hover{border-color:var(--amber);color:var(--amber)}
 .btn-primary{background:var(--amber);color:#fff;border:none;font-family:inherit;font-size:13.5px;font-weight:600;padding:9px 22px;border-radius:var(--radius-sm);cursor:pointer;flex:1;transition:opacity .15s}
 .btn-primary:hover{opacity:.88}
 .btn-secondary{background:var(--ground);border:1px solid var(--border);color:var(--text-sec);font-family:inherit;font-size:13.5px;padding:9px 18px;border-radius:var(--radius-sm);cursor:pointer}
@@ -324,37 +333,93 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <label>Job ID</label>
           <input id="nj-id" placeholder="Auto (e.g. TF-004) — leave blank to auto-number">
         </div>
+        <div class="modal-section-label">Insurer Details</div>
         <div class="form-field">
-          <label>Insurer</label>
+          <label>Insurance Company</label>
           <input id="nj-insurer" list="insurerList" placeholder="e.g. New India Assurance">
         </div>
+        <div class="form-field">
+          <label>Insurer Branch Name</label>
+          <input id="nj-insurer-branch" placeholder="e.g. Chennai Regional Office">
+        </div>
+        <div class="form-field full">
+          <label>Appointing Office Address</label>
+          <input id="nj-appointing-office-address">
+        </div>
+        <div class="form-field">
+          <label>Office District/City</label>
+          <input id="nj-appointing-office-district">
+        </div>
+        <div class="form-field">
+          <label>Office State</label>
+          <input id="nj-appointing-office-state">
+        </div>
+        <div class="form-field">
+          <label>Appointing Person</label>
+          <input id="nj-appointing-person">
+        </div>
+        <div class="form-field">
+          <label>Appointing Person Email</label>
+          <input id="nj-appointing-person-email" type="email">
+        </div>
+        <div class="form-field">
+          <label>Appointing Person Phone</label>
+          <input id="nj-appointing-person-phone">
+        </div>
+
+        <div class="modal-section-label">Claim Details</div>
         <div class="form-field">
           <label>Insured Name</label>
           <input id="nj-insured" placeholder="e.g. M/s Kalyani Textiles">
         </div>
-        <div class="form-field">
-          <label>Contact Person</label>
-          <input id="nj-contact-person" placeholder="e.g. Ramesh Kumar">
-        </div>
-        <div class="form-field">
-          <label>Contact Phone</label>
-          <input id="nj-contact-phone" placeholder="e.g. 98765 43210">
-        </div>
         <div class="form-field full">
-          <label>Address</label>
+          <label>Insured Address</label>
           <input id="nj-address" placeholder="Site / insured address">
         </div>
         <div class="form-field">
-          <label>District / City</label>
+          <label>District</label>
           <input id="nj-district">
         </div>
         <div class="form-field">
-          <label>Policy No.</label>
-          <input id="nj-policy">
+          <label>State</label>
+          <input id="nj-insured-state">
+        </div>
+        <div class="form-field">
+          <label>Pincode</label>
+          <input id="nj-insured-pincode">
+        </div>
+        <div class="form-field full">
+          <label>Contact Person(s)</label>
+          <div id="nj-contacts"></div>
+          <button type="button" class="btn-add-contact" onclick="addContactRow('nj-contacts')">+ Add Contact</button>
+        </div>
+        <div class="form-field">
+          <label>Deputation Date</label>
+          <input id="nj-doi" type="date">
+        </div>
+        <div class="form-field">
+          <label>Deputation Mode</label>
+          <select id="nj-deputation-mode">
+            <option value="">— Select —</option>
+            <option value="Email">Email</option>
+            <option value="Call">Call</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Date of Loss</label>
+          <input id="nj-dol" type="date">
+        </div>
+        <div class="form-field">
+          <label>Claim No.</label>
+          <input id="nj-claim">
         </div>
         <div class="form-field">
           <label>Policy Name</label>
           <input id="nj-policy-name">
+        </div>
+        <div class="form-field">
+          <label>Policy No.</label>
+          <input id="nj-policy">
         </div>
         <div class="form-field">
           <label>Policy Period From</label>
@@ -365,20 +430,16 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
           <input id="nj-policy-period-to" type="date">
         </div>
         <div class="form-field">
-          <label>Claim No.</label>
-          <input id="nj-claim">
-        </div>
-        <div class="form-field">
           <label>Peril / Type of Loss</label>
           <input id="nj-peril" placeholder="e.g. Fire, Burglary, EAR">
         </div>
         <div class="form-field">
-          <label>Approx. Claim Amount (₹)</label>
-          <input id="nj-amount" placeholder="e.g. 45,00,000">
-        </div>
-        <div class="form-field">
           <label>Estimated Loss (₹)</label>
           <input id="nj-estimated-loss">
+        </div>
+        <div class="form-field">
+          <label>Approx. Claim Amount (₹)</label>
+          <input id="nj-amount" placeholder="e.g. 45,00,000">
         </div>
         <div class="form-field">
           <label>Gross Loss (₹)</label>
@@ -396,22 +457,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:v
             <option value="Miscellaneous"></option>
           </datalist>
         </div>
-        <div class="form-field">
-          <label>Appointing Office (State &amp; Address)</label>
-          <input id="nj-appointing-office">
-        </div>
-        <div class="form-field">
-          <label>Appointing Person</label>
-          <input id="nj-appointing-person">
-        </div>
-        <div class="form-field">
-          <label>Date of Loss</label>
-          <input id="nj-dol" type="date">
-        </div>
-        <div class="form-field">
-          <label>Date of Intimation</label>
-          <input id="nj-doi" type="date">
-        </div>
+
         <div class="form-field full">
           <label>Director Responsible</label>
           <div class="assigned-grid" id="nj-assign-director"></div>
@@ -1068,26 +1114,48 @@ function buildJobPanel(j) {
         <label>Title</label>
         <input id="sp-f-title" value="${esc(j.title)}">
       </div>
-      <div class="sp-field"><label>Insurer</label><input id="sp-f-insurer" list="insurerList" value="${esc(j.insurer||'')}"></div>
-      <div class="sp-field"><label>Insured</label><input id="sp-f-insured" value="${esc(j.insured||'')}"></div>
-      <div class="sp-field"><label>Contact Person</label><input id="sp-f-contact-person" value="${esc(j.contact_person||'')}"></div>
-      <div class="sp-field"><label>Contact Phone</label><input id="sp-f-contact-phone" value="${esc(j.contact_phone||'')}"></div>
-      <div class="sp-field sp-field-full"><label>Address</label><input id="sp-f-address" value="${esc(j.address||'')}"></div>
-      <div class="sp-field"><label>District / City</label><input id="sp-f-district" value="${esc(j.district||'')}"></div>
-      <div class="sp-field"><label>Policy No.</label><input id="sp-f-policy" value="${esc(j.policy_no||'')}"></div>
+      <div class="modal-section-label">Insurer Details</div>
+      <div class="sp-field"><label>Insurance Company</label><input id="sp-f-insurer" list="insurerList" value="${esc(j.insurer||'')}"></div>
+      <div class="sp-field"><label>Insurer Branch Name</label><input id="sp-f-insurer-branch" value="${esc(j.insurer_branch||'')}"></div>
+      <div class="sp-field sp-field-full"><label>Appointing Office Address</label><input id="sp-f-appointing-office-address" value="${esc(j.appointing_office_address||'')}"></div>
+      <div class="sp-field"><label>Office District/City</label><input id="sp-f-appointing-office-district" value="${esc(j.appointing_office_district||'')}"></div>
+      <div class="sp-field"><label>Office State</label><input id="sp-f-appointing-office-state" value="${esc(j.appointing_office_state||'')}"></div>
+      <div class="sp-field"><label>Appointing Person</label><input id="sp-f-appointing-person" value="${esc(j.appointing_person||'')}"></div>
+      <div class="sp-field"><label>Appointing Person Email</label><input type="email" id="sp-f-appointing-person-email" value="${esc(j.appointing_person_email||'')}"></div>
+      <div class="sp-field"><label>Appointing Person Phone</label><input id="sp-f-appointing-person-phone" value="${esc(j.appointing_person_phone||'')}"></div>
+
+      <div class="modal-section-label">Claim Details</div>
+      <div class="sp-field"><label>Insured Name</label><input id="sp-f-insured" value="${esc(j.insured||'')}"></div>
+      <div class="sp-field sp-field-full"><label>Insured Address</label><input id="sp-f-address" value="${esc(j.address||'')}"></div>
+      <div class="sp-field"><label>District</label><input id="sp-f-district" value="${esc(j.district||'')}"></div>
+      <div class="sp-field"><label>State</label><input id="sp-f-insured-state" value="${esc(j.insured_state||'')}"></div>
+      <div class="sp-field"><label>Pincode</label><input id="sp-f-insured-pincode" value="${esc(j.insured_pincode||'')}"></div>
+      <div class="sp-field sp-field-full">
+        <label>Contact Person(s)</label>
+        <div id="sp-contacts">${(j.contacts&&j.contacts.length?j.contacts:[{}]).map(contactRowHtml).join('')}</div>
+        <button type="button" class="btn-add-contact" onclick="addContactRow('sp-contacts')">+ Add Contact</button>
+      </div>
+      <div class="sp-field"><label>Deputation Date</label><input type="date" id="sp-f-doi" value="${j.date_intimation||''}"></div>
+      <div class="sp-field"><label>Deputation Mode</label>
+        <select id="sp-f-deputation-mode">
+          <option value="" ${!j.deputation_mode?'selected':''}>— Select —</option>
+          <option value="Email" ${j.deputation_mode==='Email'?'selected':''}>Email</option>
+          <option value="Call" ${j.deputation_mode==='Call'?'selected':''}>Call</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>Date of Loss</label><input type="date" id="sp-f-dol" value="${j.date_loss||''}"></div>
+      <div class="sp-field"><label>Claim No.</label><input id="sp-f-claim" value="${esc(j.claim_no||'')}"></div>
       <div class="sp-field"><label>Policy Name</label><input id="sp-f-policy-name" value="${esc(j.policy_name||'')}"></div>
+      <div class="sp-field"><label>Policy No.</label><input id="sp-f-policy" value="${esc(j.policy_no||'')}"></div>
       <div class="sp-field"><label>Policy Period From</label><input type="date" id="sp-f-policy-period-from" value="${j.policy_period_from||''}"></div>
       <div class="sp-field"><label>Policy Period Expiry</label><input type="date" id="sp-f-policy-period-to" value="${j.policy_period_to||''}"></div>
-      <div class="sp-field"><label>Claim No.</label><input id="sp-f-claim" value="${esc(j.claim_no||'')}"></div>
       <div class="sp-field"><label>Peril</label><input id="sp-f-peril" value="${esc(j.peril||'')}"></div>
-      <div class="sp-field"><label>Claim Amount (₹)</label><input id="sp-f-amount" value="${esc(j.claim_amount||'')}"></div>
       <div class="sp-field"><label>Estimated Loss (₹)</label><input id="sp-f-estimated-loss" value="${esc(j.estimated_loss||'')}"></div>
+      <div class="sp-field"><label>Claim Amount (₹)</label><input id="sp-f-amount" value="${esc(j.claim_amount||'')}"></div>
       <div class="sp-field"><label>Gross Loss (₹)</label><input id="sp-f-gross-loss" value="${esc(j.gross_loss||'')}"></div>
       <div class="sp-field"><label>Department</label><input id="sp-f-department" list="departmentList" value="${esc(j.department||'')}"></div>
-      <div class="sp-field"><label>Appointing Office</label><input id="sp-f-appointing-office" value="${esc(j.appointing_office||'')}"></div>
-      <div class="sp-field"><label>Appointing Person</label><input id="sp-f-appointing-person" value="${esc(j.appointing_person||'')}"></div>
-      <div class="sp-field"><label>Date of Loss</label><input type="date" id="sp-f-dol" value="${j.date_loss||''}"></div>
-      <div class="sp-field"><label>Date of Intimation</label><input type="date" id="sp-f-doi" value="${j.date_intimation||''}"></div>
+
+      <div class="modal-section-label">Survey Scheduling</div>
       <div class="sp-field"><label>Survey Date</label><input type="date" id="sp-f-survey" value="${j.survey_date||''}"></div>
       <div class="sp-field"><label>Appointment Date</label><input type="date" id="sp-f-appt" value="${j.appointment_date||''}"></div>
       <div class="sp-field"><label>Appointment</label>
@@ -1202,11 +1270,20 @@ async function saveJob() {
   if (notes !== j.notes)  { updates.notes = notes; actEntries.push({text:`Notes updated`, ts:Date.now(),actor}); }
 
   updates.insurer       = document.getElementById('sp-f-insurer')?.value;
+  updates.insurer_branch = document.getElementById('sp-f-insurer-branch')?.value;
+  updates.appointing_office_address  = document.getElementById('sp-f-appointing-office-address')?.value;
+  updates.appointing_office_district = document.getElementById('sp-f-appointing-office-district')?.value;
+  updates.appointing_office_state    = document.getElementById('sp-f-appointing-office-state')?.value;
+  updates.appointing_person = document.getElementById('sp-f-appointing-person')?.value;
+  updates.appointing_person_email = document.getElementById('sp-f-appointing-person-email')?.value;
+  updates.appointing_person_phone = document.getElementById('sp-f-appointing-person-phone')?.value;
   updates.insured       = document.getElementById('sp-f-insured')?.value;
-  updates.contact_person = document.getElementById('sp-f-contact-person')?.value;
-  updates.contact_phone = document.getElementById('sp-f-contact-phone')?.value;
   updates.address       = document.getElementById('sp-f-address')?.value;
   updates.district      = document.getElementById('sp-f-district')?.value;
+  updates.insured_state   = document.getElementById('sp-f-insured-state')?.value;
+  updates.insured_pincode = document.getElementById('sp-f-insured-pincode')?.value;
+  updates.contacts      = collectContacts('sp-contacts');
+  updates.deputation_mode = document.getElementById('sp-f-deputation-mode')?.value;
   updates.policy_no     = document.getElementById('sp-f-policy')?.value;
   updates.policy_name   = document.getElementById('sp-f-policy-name')?.value;
   updates.policy_period_from = document.getElementById('sp-f-policy-period-from')?.value;
@@ -1217,8 +1294,6 @@ async function saveJob() {
   updates.estimated_loss = document.getElementById('sp-f-estimated-loss')?.value;
   updates.gross_loss    = document.getElementById('sp-f-gross-loss')?.value;
   updates.department    = document.getElementById('sp-f-department')?.value;
-  updates.appointing_office = document.getElementById('sp-f-appointing-office')?.value;
-  updates.appointing_person = document.getElementById('sp-f-appointing-person')?.value;
   updates.date_loss     = document.getElementById('sp-f-dol')?.value;
   updates.date_intimation = document.getElementById('sp-f-doi')?.value;
   updates.survey_date   = document.getElementById('sp-f-survey')?.value;
@@ -1249,20 +1324,62 @@ function buildNewJobAssign() {
   document.getElementById('nj-assign-backstaff').innerHTML = chipsHtml(TEAM);
 }
 
-function openNewJob()  { document.getElementById('newJobModal').hidden = false; }
+function openNewJob() {
+  document.getElementById('newJobModal').hidden = false;
+  renderContacts('nj-contacts', []);
+}
 function closeNewJob() { document.getElementById('newJobModal').hidden = true; }
+
+// ── MULTI-CONTACT ROWS (reused by New Job + job detail panel) ──
+function contactRowHtml(c) {
+  c = c || {};
+  return `
+  <div class="contact-card" data-contact-row>
+    <div class="contact-card-grid">
+      <input placeholder="Name" class="ct-name" value="${esc(c.name||'')}">
+      <input placeholder="Designation" class="ct-designation" value="${esc(c.designation||'')}">
+      <input placeholder="Phone" class="ct-phone" value="${esc(c.phone||'')}">
+      <input placeholder="Email" type="email" class="ct-email" value="${esc(c.email||'')}">
+    </div>
+    <button type="button" class="contact-remove-btn" onclick="this.closest('[data-contact-row]').remove()" title="Remove contact">✕</button>
+  </div>`;
+}
+function addContactRow(containerId, c) {
+  document.getElementById(containerId).insertAdjacentHTML('beforeend', contactRowHtml(c));
+}
+function renderContacts(containerId, contacts) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  (contacts && contacts.length ? contacts : [{}]).forEach(c => addContactRow(containerId, c));
+}
+function collectContacts(containerId) {
+  return [...document.querySelectorAll(`#${containerId} [data-contact-row]`)]
+    .map(row => ({
+      name: row.querySelector('.ct-name').value.trim(),
+      designation: row.querySelector('.ct-designation').value.trim(),
+      phone: row.querySelector('.ct-phone').value.trim(),
+      email: row.querySelector('.ct-email').value.trim(),
+    }))
+    .filter(c => c.name || c.designation || c.phone || c.email);
+}
 
 // Maps New Job form field ids to the job body key they populate.
 const NJ_FIELD_MAP = {
-  'nj-insurer': 'insurer', 'nj-insured': 'insured',
-  'nj-contact-person': 'contact_person', 'nj-contact-phone': 'contact_phone',
-  'nj-address': 'address', 'nj-district': 'district',
+  'nj-insurer': 'insurer', 'nj-insurer-branch': 'insurer_branch',
+  'nj-appointing-office-address': 'appointing_office_address',
+  'nj-appointing-office-district': 'appointing_office_district',
+  'nj-appointing-office-state': 'appointing_office_state',
+  'nj-appointing-person': 'appointing_person',
+  'nj-appointing-person-email': 'appointing_person_email',
+  'nj-appointing-person-phone': 'appointing_person_phone',
+  'nj-insured': 'insured', 'nj-address': 'address', 'nj-district': 'district',
+  'nj-insured-state': 'insured_state', 'nj-insured-pincode': 'insured_pincode',
+  'nj-deputation-mode': 'deputation_mode',
   'nj-policy': 'policy_no', 'nj-policy-name': 'policy_name',
   'nj-policy-period-from': 'policy_period_from', 'nj-policy-period-to': 'policy_period_to',
   'nj-claim': 'claim_no', 'nj-peril': 'peril', 'nj-amount': 'claim_amount',
   'nj-estimated-loss': 'estimated_loss', 'nj-gross-loss': 'gross_loss',
-  'nj-department': 'department', 'nj-appointing-office': 'appointing_office',
-  'nj-appointing-person': 'appointing_person',
+  'nj-department': 'department',
   'nj-dol': 'date_loss', 'nj-doi': 'date_intimation',
 };
 
@@ -1280,6 +1397,7 @@ async function submitNewJob() {
     surveyor_ids: activeIds('nj-assign-surveyor'),
     branch_ids: activeIds('nj-assign-branch'),
     backstaff_ids: activeIds('nj-assign-backstaff'),
+    contacts: collectContacts('nj-contacts'),
     created_by: currentUser || 'unknown',
   };
   for (const [fieldId, key] of Object.entries(NJ_FIELD_MAP)) {
@@ -1295,6 +1413,7 @@ async function submitNewJob() {
     // Clear form
     ['nj-title', 'nj-id', ...Object.keys(NJ_FIELD_MAP)]
       .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+    renderContacts('nj-contacts', []);
     buildNewJobAssign();
   } catch(e) {
     alert('Error creating job: ' + e.message);

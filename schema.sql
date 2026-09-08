@@ -12,26 +12,39 @@ INSERT OR IGNORE INTO counter (id, next_val) VALUES ('main', 1);
 CREATE TABLE IF NOT EXISTS jobs (
   id                   TEXT    PRIMARY KEY,  -- e.g. "TF-001"
   title                TEXT    NOT NULL,     -- short description
+  -- ── Insurer Details ──
   insurer              TEXT    DEFAULT '',
+  insurer_branch       TEXT    DEFAULT '',
+  appointing_office_address  TEXT DEFAULT '',
+  appointing_office_district TEXT DEFAULT '',
+  appointing_office_state    TEXT DEFAULT '',
+  appointing_person    TEXT    DEFAULT '',
+  appointing_person_email TEXT DEFAULT '',
+  appointing_person_phone TEXT DEFAULT '',
+  appointing_office    TEXT    DEFAULT '',   -- legacy combined field, superseded by appointing_office_*
+  -- ── Claim Details ──
   insured              TEXT    DEFAULT '',
+  address              TEXT    DEFAULT '',
+  district             TEXT    DEFAULT '',
+  insured_state        TEXT    DEFAULT '',
+  insured_pincode      TEXT    DEFAULT '',
+  contacts             TEXT    NOT NULL DEFAULT '[]',   -- JSON array of {name,designation,phone,email}
+  contact_person       TEXT    DEFAULT '',   -- legacy single contact, superseded by `contacts`
+  contact_phone        TEXT    DEFAULT '',   -- legacy single contact, superseded by `contacts`
+  deputation_mode      TEXT    DEFAULT '',   -- 'Email' or 'Call'
+  date_loss            TEXT    DEFAULT '',
+  date_intimation      TEXT    DEFAULT '',   -- doubles as "Deputation Date"
+  claim_no             TEXT    DEFAULT '',
   policy_no            TEXT    DEFAULT '',
   policy_name          TEXT    DEFAULT '',
   policy_period_from   TEXT    DEFAULT '',   -- date, e.g. "2025-04-01"
   policy_period_to     TEXT    DEFAULT '',   -- date, e.g. "2026-03-31"
-  claim_no             TEXT    DEFAULT '',
   peril                TEXT    DEFAULT '',
-  claim_amount         TEXT    DEFAULT '',
   estimated_loss       TEXT    DEFAULT '',
+  claim_amount         TEXT    DEFAULT '',
   gross_loss           TEXT    DEFAULT '',
   department           TEXT    DEFAULT '',
-  appointing_office    TEXT    DEFAULT '',
-  appointing_person    TEXT    DEFAULT '',
-  contact_person       TEXT    DEFAULT '',
-  contact_phone        TEXT    DEFAULT '',
-  address              TEXT    DEFAULT '',
-  district             TEXT    DEFAULT '',
-  date_loss            TEXT    DEFAULT '',
-  date_intimation      TEXT    DEFAULT '',
+  -- ── Survey scheduling ──
   survey_date          TEXT    DEFAULT '',
   appointment_date     TEXT    DEFAULT '',
   appointment_confirmed INTEGER DEFAULT 0,
