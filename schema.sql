@@ -400,3 +400,18 @@ CREATE INDEX IF NOT EXISTS idx_task_work_sessions_ended   ON task_work_sessions 
 -- requests.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_work_sessions_one_active_per_staff
   ON task_work_sessions (staff_id) WHERE ended_at IS NULL;
+
+-- ── Task Personal Preferences (V1.4) ────────────────────────────
+-- Exactly one "Do Next" pin per staff member — staff_id itself is the
+-- PRIMARY KEY, so the schema guarantees the one-pin invariant the same
+-- way the partial unique index above guarantees one-active-session.
+-- Purely a personal ranking override for My Work; never affects global
+-- task priority, never visible to/affects any other staff member's
+-- recommendations even on a shared task.
+CREATE TABLE IF NOT EXISTS task_personal_preferences (
+  staff_id     TEXT    PRIMARY KEY,
+  next_task_id TEXT    NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  FOREIGN KEY (staff_id) REFERENCES staff(id),
+  FOREIGN KEY (next_task_id) REFERENCES tasks(id)
+);

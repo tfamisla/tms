@@ -1666,6 +1666,293 @@ async function correctWorkSession(db, sessionId, body, user) {
   return db.prepare('SELECT * FROM task_work_sessions WHERE id = ?').bind(sessionId).first();
 }
 
+// ── MY WORK / NOW–NEXT–LATER (V1.4) ─────────────────────────────────
+// Deterministic, rules-based recommendation engine — no AI/LLM calls, no
+// stored score (computed fresh on every request; correctness over premature
+// optimization at TFAM's current scale). Never mutates tasks/jobs/sessions
+// — GET /api/my-work is purely read-only. Priority stays a human-entered
+// field; the recommendation score is derived intelligence layered on top,
+// never written back to `tasks`.
+const QUICK_TASK_MAX_MINUTES = 15;
+const OVERDUE_AGING_CAP = 50;
+const TASK_AGE_CAP = 30;
+// Task types legitimately expected to remain open after a claim closes
+// (closure in this system only happens after FSR submission + billing is
+// fully settled — see closeJob() — so an open task on a closed claim is
+// exceptional by default, EXCEPT for these post-closure housekeeping types).
+const POST_CLOSURE_TASK_TYPES = ['bill_entry', 'entry_updation'];
+
+function istDateOfTimestamp(ts) {
+  return new Date(ts + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+// Timezone-agnostic whole-day index for a 'YYYY-MM-DD' string — used only
+// to diff two calendar dates (days overdue / days until due), never as a
+// real instant.
+function dayIndex(dateStr) {
+  return Math.floor(Date.parse(dateStr + 'T00:00:00Z') / 86400000);
+}
+function minutesUntil(nowTimeHHMM, dueTimeHHMM) {
+  const [nh, nm] = nowTimeHHMM.split(':').map(Number);
+  const [dh, dm] = dueTimeHHMM.split(':').map(Number);
+  return (dh * 60 + dm) - (nh * 60 + nm);
+}
+
+// Pure, deterministic, unit-testable. Never touches the database — all
+// context (now, today, pin, who-else-is-working) is precomputed by the
+// caller. Returns a score plus structured reason codes (not prose — the
+// frontend translates codes to friendly text) and whether the task fits
+// an active "I Have Time" window.
+function scoreTaskForUser(task, ctx) {
+  let score = 0;
+  const reasons = [];
+
+  const overdueDays = (task.due_date && task.due_date < ctx.todayStr)
+    ? Math.max(1, dayIndex(ctx.todayStr) - dayIndex(task.due_date))
+    : 0;
+
+  if (overdueDays > 0) {
+    score += 100 + Math.min(overdueDays * 5, OVERDUE_AGING_CAP);
+    reasons.push({ code: 'overdue', days: overdueDays });
+  } else if (task.due_date === ctx.todayStr) {
+    score += 80;
+    reasons.push({ code: 'due_today' });
+    if (task.due_time) {
+      const mins = minutesUntil(ctx.nowTimeHHMM, task.due_time);
+      if (mins >= 0) {
+        if (mins <= 60) { score += 40; reasons.push({ code: 'due_within_hour' }); }
+        else if (mins <= 180) { score += 25; reasons.push({ code: 'due_within_3h' }); }
+        else { score += 10; reasons.push({ code: 'due_later_today' }); }
+      }
+    }
+  } else if (task.due_date) {
+    const daysUntil = dayIndex(task.due_date) - dayIndex(ctx.todayStr);
+    if (daysUntil === 1) { score += 50; reasons.push({ code: 'due_tomorrow' }); }
+    else if (daysUntil >= 2 && daysUntil <= 3) { score += 30; reasons.push({ code: 'due_soon', days: daysUntil }); }
+  }
+
+  if (task.priority === 'urgent') { score += 80; reasons.push({ code: 'urgent' }); }
+  else if (task.priority === 'high') { score += 50; reasons.push({ code: 'high_priority' }); }
+  else if (task.priority === 'normal') { score += 20; }
+
+  const ageInDays = Math.max(0, Math.floor((ctx.nowMs - task.created_at) / 86400000));
+  score += Math.min(ageInDays, TASK_AGE_CAP);
+  if (ageInDays >= 7) reasons.push({ code: 'old_task', days: ageInDays });
+
+  if (task.expected_minutes && task.expected_minutes <= QUICK_TASK_MAX_MINUTES) {
+    let bonus = 0;
+    if (ageInDays >= 30) bonus = 50;
+    else if (ageInDays >= 14) bonus = 30;
+    else if (ageInDays >= 7) bonus = 15;
+    if (bonus > 0) { score += bonus; reasons.push({ code: 'quick_task_old' }); }
+  }
+
+  if (task.status === 'in_progress') {
+    score += 20;
+    reasons.push({ code: 'previously_started' });
+  }
+
+  let fitsAvailableTime = null;
+  if (ctx.availableMinutes != null) {
+    if (task.expected_minutes != null) {
+      if (task.expected_minutes <= ctx.availableMinutes) {
+        fitsAvailableTime = true;
+        score += 30;
+        if (task.expected_minutes <= ctx.availableMinutes * 0.75) score += 10;
+        reasons.push({ code: 'fits_time' });
+        if (task.expected_minutes <= QUICK_TASK_MAX_MINUTES) reasons.push({ code: 'quick_win' });
+      } else {
+        fitsAvailableTime = false;
+      }
+    }
+  }
+
+  if (ctx.pinnedTaskId && task.id === ctx.pinnedTaskId) {
+    score += 500;
+    reasons.push({ code: 'pinned_next' });
+  }
+
+  const others = (ctx.othersWorkingByTask && ctx.othersWorkingByTask[task.id]) || [];
+  if (others.length > 0) {
+    if (task.priority !== 'urgent' && overdueDays === 0) score -= 10;
+    reasons.push({ code: 'someone_else_working', names: others });
+  }
+
+  return { score, reasons, fitsAvailableTime, ageInDays, overdueDays };
+}
+
+const TASK_TIE_PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
+function dueSortKey(t) {
+  if (!t.due_date) return '9999-99-99 99:99';
+  return `${t.due_date} ${t.due_time || '99:99'}`;
+}
+// Deterministic tie-breakers, applied only when scores are equal: earlier
+// due date/time, then higher manual priority, then older created_at, then
+// smaller expected_minutes, then stable task id — never a random/unstable
+// ordering across identical requests.
+function compareScored(a, b) {
+  if (b.score !== a.score) return b.score - a.score;
+  const dueCmp = dueSortKey(a.task).localeCompare(dueSortKey(b.task));
+  if (dueCmp !== 0) return dueCmp;
+  const prCmp = TASK_TIE_PRIORITY_RANK[a.task.priority] - TASK_TIE_PRIORITY_RANK[b.task.priority];
+  if (prCmp !== 0) return prCmp;
+  if (a.task.created_at !== b.task.created_at) return a.task.created_at - b.task.created_at;
+  const aEm = a.task.expected_minutes ?? Infinity, bEm = b.task.expected_minutes ?? Infinity;
+  if (aEm !== bEm) return aEm - bEm;
+  return String(a.task.id).localeCompare(String(b.task.id));
+}
+
+async function getWaitingSince(db, taskId) {
+  const { results } = await db.prepare(
+    "SELECT ts FROM task_activity WHERE task_id = ? AND text LIKE 'Task moved to Waiting%' ORDER BY ts DESC LIMIT 1"
+  ).bind(taskId).all();
+  return results.length > 0 ? results[0].ts : null;
+}
+
+// Read-only. Computes the whole My Work payload for one authenticated
+// staff member — never writes to tasks/jobs/task_work_sessions.
+async function computeMyWork(db, user, availableMinutes) {
+  const allTasks = await listTasks(db);
+  const tasksById = {};
+  for (const t of allTasks) tasksById[t.id] = t;
+  const myTasks = allTasks.filter(t => (t.assignee_ids || []).includes(user.id));
+
+  const activeSession = await getActiveSessionForStaff(db, user.id);
+  const currentTaskId = activeSession ? activeSession.task_id : null;
+
+  const jobIds = [...new Set(myTasks.filter(t => t.job_id).map(t => t.job_id))];
+  const jobsById = {};
+  if (jobIds.length > 0) {
+    const placeholders = jobIds.map(() => '?').join(',');
+    const { results } = await db.prepare(`SELECT id, stage, title, insured FROM jobs WHERE id IN (${placeholders})`).bind(...jobIds).all();
+    for (const j of results) jobsById[j.id] = j;
+  }
+
+  const pinRow = await db.prepare('SELECT next_task_id FROM task_personal_preferences WHERE staff_id = ?').bind(user.id).first();
+  const pinnedTaskId = pinRow ? pinRow.next_task_id : null;
+
+  const live = await listLiveWork(db);
+  const otherStaffIds = [...new Set(live.filter(s => s.staff_id !== user.id).map(s => s.staff_id))];
+  const otherStaffNames = await staffNames(db, otherStaffIds);
+  const nameById = {};
+  otherStaffIds.forEach((id, i) => nameById[id] = otherStaffNames[i]);
+  const othersWorkingByTask = {};
+  for (const s of live) {
+    if (s.staff_id === user.id) continue;
+    (othersWorkingByTask[s.task_id] ||= []).push(nameById[s.staff_id] || s.staff_id);
+  }
+
+  const waiting = [];
+  const blocked = [];
+  const actionable = [];
+  const closedClaimExceptional = [];
+
+  for (const t of myTasks) {
+    if (t.status === 'completed' || t.status === 'cancelled') continue;
+    if (t.id === currentTaskId) continue; // owned by NOW, never duplicated below
+
+    if (t.status === 'waiting') { waiting.push(t); continue; }
+    if (t.is_blocked) { blocked.push(t); continue; }
+
+    const job = t.job_id ? jobsById[t.job_id] : null;
+    if (job && job.stage === 'closed' && !POST_CLOSURE_TASK_TYPES.includes(t.task_type)) {
+      closedClaimExceptional.push(t);
+      continue;
+    }
+
+    actionable.push(t);
+  }
+
+  const nowMs = Date.now();
+  const todayStr = todayIST();
+  const nowTimeHHMM = nowISTTimeHHMM();
+  const ctx = { nowMs, todayStr, nowTimeHHMM, availableMinutes, pinnedTaskId, othersWorkingByTask };
+
+  const scored = actionable.map(t => ({ task: t, ...scoreTaskForUser(t, ctx) }));
+  scored.sort(compareScored);
+
+  let recommendedNow = null;
+  if (!currentTaskId && scored.length > 0) {
+    recommendedNow = scored[0];
+    if (availableMinutes != null && recommendedNow.fitsAvailableTime === false) {
+      const fitting = scored.find(s => s.fitsAvailableTime === true);
+      if (fitting) {
+        recommendedNow = fitting;
+      } else {
+        recommendedNow = { ...recommendedNow, reasons: [...recommendedNow.reasons, { code: 'needs_more_time' }] };
+      }
+    }
+  }
+
+  const rest = recommendedNow ? scored.filter(s => s.task.id !== recommendedNow.task.id) : scored;
+  const nextItems = rest.slice(0, 5);
+  const laterItems = rest.slice(5);
+
+  let current = null;
+  if (currentTaskId) {
+    const currentTask = tasksById[currentTaskId] || myTasks.find(t => t.id === currentTaskId);
+    const sessions = await listTaskWorkSessions(db, currentTaskId);
+    const totalActualSeconds = sessions.reduce((sum, s) =>
+      sum + (s.ended_at ? (s.duration_seconds || 0) : (nowMs - s.started_at) / 1000), 0);
+    current = { task: currentTask, session: activeSession, total_actual_seconds: totalActualSeconds };
+  }
+
+  const waitingWithMeta = [];
+  for (const t of waiting) {
+    waitingWithMeta.push({ task: t, waiting_since: await getWaitingSince(db, t.id) });
+  }
+  const blockedWithMeta = blocked.map(t => ({
+    task: t, blocker: t.blocked_by_task_id ? (tasksById[t.blocked_by_task_id] || null) : null,
+  }));
+
+  const openCount = myTasks.filter(t => t.status !== 'completed' && t.status !== 'cancelled').length;
+  const todayCount = myTasks.filter(t => t.due_date === todayStr && t.status !== 'completed' && t.status !== 'cancelled').length;
+  const overdueCount = myTasks.filter(t => t.is_overdue).length;
+
+  const { results: mySessions } = await db.prepare(
+    'SELECT started_at, ended_at, duration_seconds FROM task_work_sessions WHERE staff_id = ? ORDER BY started_at DESC LIMIT 500'
+  ).bind(user.id).all();
+  const trackedTodaySeconds = mySessions
+    .filter(s => istDateOfTimestamp(s.started_at) === todayStr)
+    .reduce((sum, s) => sum + (s.ended_at ? (s.duration_seconds || 0) : (nowMs - s.started_at) / 1000), 0);
+
+  return {
+    current,
+    recommended_now: current ? null : recommendedNow,
+    next: nextItems,
+    later: laterItems,
+    waiting: waitingWithMeta,
+    blocked: blockedWithMeta,
+    closed_claim_exceptional: closedClaimExceptional,
+    pinned_task_id: pinnedTaskId,
+    available_minutes: availableMinutes,
+    summary: {
+      open: openCount, due_today: todayCount, overdue: overdueCount,
+      waiting: waiting.length, tracked_today_seconds: trackedTodaySeconds,
+    },
+  };
+}
+
+// Exactly one pinned "Do Next" task per staff member — the PRIMARY KEY on
+// staff_id enforces this at the schema level, same pattern as the
+// one-active-session partial index in V1.3. Setting a new pin replaces the
+// old one (ON CONFLICT DO UPDATE); passing a null task_id clears it.
+async function setDoNextPin(db, user, taskId) {
+  if (taskId) {
+    const task = await db.prepare('SELECT 1 FROM tasks WHERE id = ?').bind(taskId).first();
+    if (!task) throw new Error('task not found');
+    const assigned = await db.prepare('SELECT 1 FROM task_assignees WHERE task_id = ? AND staff_id = ?').bind(taskId, user.id).first();
+    if (!assigned) throw new Error('You can only pin a task you are assigned to');
+    const now = Date.now();
+    await db.prepare(`
+      INSERT INTO task_personal_preferences (staff_id, next_task_id, updated_at) VALUES (?,?,?)
+      ON CONFLICT(staff_id) DO UPDATE SET next_task_id = excluded.next_task_id, updated_at = excluded.updated_at
+    `).bind(user.id, taskId, now).run();
+  } else {
+    await db.prepare('DELETE FROM task_personal_preferences WHERE staff_id = ?').bind(user.id).run();
+  }
+  return { ok: true, pinned_task_id: taskId };
+}
+
 async function getSetting(db, key) {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first();
   return row ? row.value : null;
@@ -2221,6 +2508,22 @@ export default {
         const id = decodeURIComponent(pathname.slice('/api/work-sessions/'.length));
         const body = await request.json();
         return json(await correctWorkSession(db, id, body, user));
+      }
+
+      if (pathname === '/api/my-work' && request.method === 'GET') {
+        const availRaw = url.searchParams.get('available_minutes');
+        let availableMinutes = null;
+        if (availRaw !== null && availRaw !== '') {
+          const n = Number(availRaw);
+          if (!Number.isInteger(n) || n <= 0) throw new Error('available_minutes must be a positive integer');
+          availableMinutes = n;
+        }
+        return json(await computeMyWork(db, user, availableMinutes));
+      }
+
+      if (pathname === '/api/my-work/pin' && request.method === 'PUT') {
+        const body = await request.json();
+        return json(await setDoNextPin(db, user, body.task_id || null));
       }
 
       {

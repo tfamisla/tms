@@ -274,6 +274,51 @@ details.sp-section[open] summary{margin-bottom:0}
 .daily-summary-bar{display:flex;gap:20px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px}
 .daily-summary-bar strong{display:block;font-size:16px;color:var(--text-pri)}
 
+/* ── MY WORK / NOW-NEXT-LATER (V1.4) ── */
+.mywork-dash-widget{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;cursor:pointer}
+.mywork-dash-widget:hover{border-color:var(--amber)}
+.mywork-dash-hdr{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;color:var(--text-faint);margin-bottom:6px}
+.mywork-dash-widget > div:not(.mywork-dash-hdr):not(.mywork-dash-link){font-size:12.5px;margin-bottom:3px}
+.mywork-dash-link{font-size:11.5px;color:var(--amber);margin-top:4px}
+.mywork-wrap{flex:1;overflow:auto;padding:16px;max-width:760px}
+.mywork-summary{display:flex;gap:18px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px}
+.mywork-summary strong{display:block;font-size:17px;color:var(--text-pri)}
+.ihavetime-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.ihavetime-label{font-size:12px;font-weight:600;color:var(--text-sec);margin-right:2px}
+.ihavetime-btn{background:var(--ground);border:1px solid var(--border);border-radius:100px;font-family:inherit;font-size:12px;padding:6px 14px;cursor:pointer;color:var(--text-sec)}
+.ihavetime-btn.active{background:var(--amber);border-color:var(--amber);color:#fff;font-weight:600}
+.ihavetime-btn.clear{color:var(--red);border-color:var(--red)}
+.mw-now-card{background:var(--navy);color:#fff;border-radius:var(--radius-lg);padding:20px;margin-bottom:20px}
+.mw-now-label{font-family:'DM Mono',monospace;font-size:10.5px;letter-spacing:.1em;font-weight:700;margin-bottom:8px}
+.mw-now-label.working{color:var(--green)}
+.mw-now-label.recommended{color:var(--amber-lt)}
+.mw-now-title{font-size:19px;font-weight:700;margin-bottom:4px}
+.mw-now-meta{font-size:12.5px;color:rgba(255,255,255,.65);margin-bottom:10px}
+.mw-now-timer{font-family:'DM Mono',monospace;font-size:32px;font-weight:700;color:var(--amber-lt);margin-bottom:6px}
+.mw-now-sub{font-size:12px;color:rgba(255,255,255,.75);margin-bottom:14px}
+.mw-now-reason{font-size:13px;color:var(--amber-lt);margin-bottom:14px}
+.mw-now-actions{display:flex;gap:8px;flex-wrap:wrap}
+.mw-now-actions .btn-primary{flex:none}
+.mw-now-actions .btn-secondary{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#fff}
+.mw-section-hdr{font-family:'DM Mono',monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);margin:18px 0 8px;display:flex;align-items:center;gap:10px}
+.mw-item-card{display:flex;gap:10px;align-items:center;background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:6px;cursor:pointer}
+.mw-item-card:hover{border-color:var(--amber)}
+.mw-item-rank{font-family:'DM Mono',monospace;font-size:13px;color:var(--text-faint);font-weight:700;width:18px;flex-shrink:0;text-align:center}
+.mw-item-body{flex:1;min-width:0}
+.mw-item-title{font-size:13px;font-weight:600}
+.mw-item-meta{font-size:11px;color:var(--text-sec);margin-top:2px}
+.mw-item-reason{font-size:11px;color:var(--amber);margin-top:2px}
+.mw-item-actions{display:flex;gap:6px;flex-shrink:0}
+.mw-item-actions .btn-secondary{padding:5px 12px;font-size:11.5px}
+.mw-compact-row{display:flex;justify-content:space-between;gap:10px;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:12px}
+.mw-compact-row:hover{background:var(--ground)}
+.mw-compact-title{font-weight:500}
+.mw-compact-meta{color:var(--text-faint);white-space:nowrap}
+.mw-wb-row{background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;margin-bottom:6px;cursor:pointer}
+.mw-wb-row:hover{border-color:var(--amber)}
+.mw-wb-title{font-size:12.5px;font-weight:600}
+.mw-wb-detail{font-size:11.5px;color:var(--text-sec);margin-top:2px}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -315,6 +360,7 @@ details.sp-section[open] summary{margin-bottom:0}
   <span class="topbar-brand">TFAM · TMS</span>
   <div class="topbar-nav">
     <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
+    <button class="nav-btn" data-view="mywork" onclick="switchView('mywork')">🎯 My Work</button>
     <button class="nav-btn" data-view="tasks" onclick="switchView('tasks')">📋 Tasks</button>
     <button class="nav-btn" data-view="staff" onclick="switchView('staff')">🛠 Admin</button>
     <button class="nav-btn" data-view="log" onclick="switchView('log')">📜 Work Log</button>
@@ -351,7 +397,47 @@ details.sp-section[open] summary{margin-bottom:0}
       <div class="task-dash-stat"><span class="task-dash-num" id="taskDashToday">0</span><span class="task-dash-lbl">Due Today</span></div>
       <div class="task-dash-stat"><span class="task-dash-num" id="taskDashOverdue">0</span><span class="task-dash-lbl" style="color:var(--red)">Overdue</span></div>
     </div>
+    <div class="mywork-dash-widget" id="myworkDashWidget" onclick="switchView('mywork')">
+      <div class="mywork-dash-hdr">🎯 MY WORK</div>
+      <div id="myworkDashBody"></div>
+      <div class="mywork-dash-link">Open My Work →</div>
+    </div>
     <div class="kanban" id="kanban"></div>
+  </div>
+</div>
+
+<!-- ── MY WORK VIEW (V1.4) ── -->
+<div class="view" id="view-mywork">
+  <div class="mywork-wrap">
+    <div class="mywork-summary" id="mw-summary"></div>
+
+    <div class="ihavetime-row" id="ihaveTimeRow">
+      <span class="ihavetime-label">I Have Time:</span>
+      <button type="button" class="ihavetime-btn" data-min="10" onclick="setAvailableMinutes(10)">10 min</button>
+      <button type="button" class="ihavetime-btn" data-min="15" onclick="setAvailableMinutes(15)">15 min</button>
+      <button type="button" class="ihavetime-btn" data-min="30" onclick="setAvailableMinutes(30)">30 min</button>
+      <button type="button" class="ihavetime-btn" data-min="45" onclick="setAvailableMinutes(45)">45 min</button>
+      <button type="button" class="ihavetime-btn" data-min="60" onclick="setAvailableMinutes(60)">1 hr</button>
+      <button type="button" class="ihavetime-btn" data-min="90" onclick="setAvailableMinutes(90)">1.5 hr</button>
+      <button type="button" class="ihavetime-btn" data-min="120" onclick="setAvailableMinutes(120)">2 hr</button>
+      <button type="button" class="ihavetime-btn clear" id="ihaveTimeClear" onclick="setAvailableMinutes(null)" hidden>Clear</button>
+    </div>
+
+    <div class="mw-now-card" id="mw-now-card"></div>
+
+    <div class="mw-section-hdr">Next</div>
+    <div id="mw-next-list"></div>
+
+    <div class="mw-section-hdr">Later <button type="button" class="wh-correct-btn" id="mw-later-toggle" onclick="toggleLaterExpanded()" hidden></button></div>
+    <div id="mw-later-list"></div>
+
+    <div class="mw-section-hdr">Waiting / Blocked</div>
+    <div id="mw-waiting-blocked"></div>
+
+    <div id="mw-closed-claim-wrap" hidden>
+      <div class="mw-section-hdr">Linked Claim Closed</div>
+      <div id="mw-closed-claim-list"></div>
+    </div>
   </div>
 </div>
 
@@ -1448,6 +1534,9 @@ let liveWork = [];         // every currently-open work session, all staff (from
 let workSessions = [];     // recent session history, most-recent-first, capped 500 (from /api/work/sessions)
 let taskWorkSessionsCache = []; // sessions for the Task Detail modal currently open (on-demand fetch)
 let editingSessionId = null;     // work session currently being corrected inline (Admin/Director only)
+let myWork = null;               // last fetched /api/my-work response
+let availableMinutesFilter = null; // "I Have Time" selection — UI-only, session-scoped (see restoreAvailableMinutesFilter())
+let laterExpanded = false;       // My Work LATER section "Show all" toggle
 let awbTimerInterval = null;     // ticking interval for the global Active Work Bar
 let taskCardTimerInterval = null; // ticking interval for "WORKING NOW" badges on task cards
 
@@ -1573,6 +1662,7 @@ function onLoggedIn() {
   document.getElementById('addBranchBtn').hidden = !isAdminUser();
   buildNewJobAssign();
   buildLogFilters();
+  restoreAvailableMinutesFilter();
   fetchAll();
   if (!pollTimer) pollTimer = setInterval(fetchAll, 5000);
   if (!taskCardTimerInterval) startTaskCardTimers();
@@ -1596,7 +1686,8 @@ async function logout() {
 // ── API CALLS ─────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes] = await Promise.all([
+    const myWorkUrl = '/api/my-work' + (availableMinutesFilter ? ('?available_minutes=' + availableMinutesFilter) : '');
+    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes] = await Promise.all([
       fetch(API + '/api/jobs'),
       fetch(API + '/api/log'),
       fetch(API + '/api/staff'),
@@ -1606,8 +1697,9 @@ async function fetchAll() {
       fetch(API + '/api/tasks'),
       fetch(API + '/api/work/live'),
       fetch(API + '/api/work/sessions'),
+      fetch(API + myWorkUrl),
     ]);
-    const all = [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes];
+    const all = [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes];
     if (all.some(r => r.status === 401)) { sessionExpired(); return; }
     if (all.some(r => !r.ok)) throw new Error('bad response');
     jobs = await jRes.json();
@@ -1619,6 +1711,7 @@ async function fetchAll() {
     tasks = await tRes.json();
     liveWork = await liveRes.json();
     workSessions = await wsRes.json();
+    myWork = await mwRes.json();
     setOnline(true);
     buildLogFilters();
     buildInsurerList();
@@ -1691,6 +1784,8 @@ function renderAll() {
   renderTaskDashWidget();
   renderTasksView();
   renderActiveWorkBar();
+  renderMyWorkDashWidget();
+  renderMyWorkView();
 }
 
 // ── STATS STRIP ───────────────────────────────────────────────
@@ -3910,6 +4005,268 @@ function viewJobTasks(jobId) {
   buildTaskFilterDropdowns();
   if (jobSel) jobSel.value = jobId;
   renderTasksView();
+}
+
+// ── MY WORK / NOW-NEXT-LATER (V1.4) ─────────────────────────────
+// Server (worker.js's computeMyWork/scoreTaskForUser) is the sole source
+// of ranking truth — this file only formats what the server already
+// computed (reason codes -> friendly text, durations, grouping). Nothing
+// here re-derives a score. "I Have Time" is pure client UI state
+// (sessionStorage — clears when the tab closes, never written to D1) that
+// just changes which /api/my-work query the poll cycle requests.
+const REASON_CODE_TEXT = {
+  overdue: r => `Overdue ${r.days} day${r.days === 1 ? '' : 's'}`,
+  due_today: () => 'Due Today',
+  due_tomorrow: () => 'Due Tomorrow',
+  due_soon: r => `Due in ${r.days} days`,
+  due_within_hour: () => 'Due within the hour',
+  due_within_3h: () => 'Due in a few hours',
+  due_later_today: () => 'Due later today',
+  urgent: () => 'Urgent Priority',
+  high_priority: () => 'High Priority',
+  old_task: r => `Pending ${r.days} days`,
+  quick_task_old: () => 'Quick Task',
+  previously_started: () => 'In Progress',
+  fits_time: () => 'Fits Your Time',
+  quick_win: () => 'Quick Win',
+  pinned_next: () => 'Pinned as Do Next',
+  needs_more_time: () => 'Needs more time than available',
+  someone_else_working: r => `${r.names.join(', ')} ${r.names.length === 1 ? 'is' : 'are'} currently working on this`,
+};
+function reasonsToText(reasons, max) {
+  return (reasons || []).slice(0, max || 3)
+    .map(r => (REASON_CODE_TEXT[r.code] ? REASON_CODE_TEXT[r.code](r) : null))
+    .filter(Boolean).join(' · ');
+}
+
+function restoreAvailableMinutesFilter() {
+  try {
+    const v = sessionStorage.getItem('tms_available_minutes');
+    availableMinutesFilter = v ? Number(v) : null;
+  } catch(e) { availableMinutesFilter = null; }
+}
+async function setAvailableMinutes(mins) {
+  availableMinutesFilter = mins;
+  try {
+    if (mins) sessionStorage.setItem('tms_available_minutes', String(mins));
+    else sessionStorage.removeItem('tms_available_minutes');
+  } catch(e) {}
+  await loadMyWork();
+  renderMyWorkView();
+}
+async function loadMyWork() {
+  try {
+    const qs = availableMinutesFilter ? ('?available_minutes=' + availableMinutesFilter) : '';
+    myWork = await apiGet('/api/my-work' + qs);
+  } catch(e) {
+    myWork = null;
+  }
+}
+
+async function pinDoNext(taskId) {
+  try {
+    await apiPut('/api/my-work/pin', { task_id: taskId });
+    await loadMyWork();
+    renderMyWorkView();
+  } catch(e) {
+    alert('Error pinning task: ' + e.message);
+  }
+}
+async function unpinDoNext() {
+  try {
+    await apiPut('/api/my-work/pin', { task_id: null });
+    await loadMyWork();
+    renderMyWorkView();
+  } catch(e) {
+    alert('Error clearing pin: ' + e.message);
+  }
+}
+function toggleLaterExpanded() {
+  laterExpanded = !laterExpanded;
+  renderLaterSection();
+}
+
+function renderMyWorkDashWidget() {
+  const el = document.getElementById('myworkDashBody');
+  if (!el || !currentUser) return;
+  if (!myWork) { el.innerHTML = '<div style="color:var(--text-faint)">Loading…</div>'; return; }
+  const parts = [];
+  if (myWork.current) parts.push(`<div><strong>Working Now:</strong> ${esc(myWork.current.task.title)}</div>`);
+  else if (myWork.recommended_now) parts.push(`<div><strong>Recommended:</strong> ${esc(myWork.recommended_now.task.title)}</div>`);
+  else parts.push('<div style="color:var(--text-faint)">No actionable tasks right now</div>');
+  if (myWork.next && myWork.next.length > 0) parts.push(`<div><strong>Next:</strong> ${esc(myWork.next[0].task.title)}</div>`);
+  parts.push(`<div style="color:${myWork.summary.overdue > 0 ? 'var(--red)' : 'var(--text-faint)'}"><strong>Overdue:</strong> ${myWork.summary.overdue}</div>`);
+  el.innerHTML = parts.join('');
+}
+
+function renderMyWorkView() {
+  if (!document.getElementById('view-mywork')) return;
+  renderMyWorkSummary();
+  renderIHaveTimeButtons();
+  renderNowCard();
+  renderNextSection();
+  renderLaterSection();
+  renderWaitingBlockedSection();
+  renderClosedClaimSection();
+}
+
+function renderMyWorkSummary() {
+  const el = document.getElementById('mw-summary');
+  if (!el) return;
+  if (!myWork) { el.innerHTML = '<div style="color:var(--text-faint);font-size:12px">Loading…</div>'; return; }
+  const s = myWork.summary;
+  el.innerHTML = `
+    <div><strong>${s.open}</strong>Open</div>
+    <div><strong>${s.due_today}</strong>Today</div>
+    <div><strong style="color:${s.overdue > 0 ? 'var(--red)' : 'var(--text-pri)'}">${s.overdue}</strong>Overdue</div>
+    <div><strong>${s.waiting}</strong>Waiting</div>
+    <div><strong>${formatDurationSeconds(s.tracked_today_seconds)}</strong>Tracked Today</div>`;
+}
+
+function renderIHaveTimeButtons() {
+  document.querySelectorAll('.ihavetime-btn:not(.clear)').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.min) === availableMinutesFilter);
+  });
+  const clearBtn = document.getElementById('ihaveTimeClear');
+  if (clearBtn) clearBtn.hidden = !availableMinutesFilter;
+}
+
+function renderNowCard() {
+  const card = document.getElementById('mw-now-card');
+  if (!card) return;
+  if (!myWork) { card.innerHTML = '<div class="task-empty">Loading…</div>'; return; }
+
+  if (myWork.current) {
+    const c = myWork.current, t = c.task;
+    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+    card.innerHTML = `
+      <div class="mw-now-label working">WORKING NOW</div>
+      <div class="mw-now-title">${esc(t.title)}</div>
+      <div class="mw-now-meta">${job ? `${job.id} · ${esc(job.title)}` : 'General Office Task'}</div>
+      <div class="mw-now-timer task-live-timer" data-started="${c.session.started_at}">00:00:00</div>
+      <div class="mw-now-sub">Expected ${t.expected_minutes ? formatTaskDuration(t.expected_minutes) : '—'} · Total Actual ${formatDurationSeconds(c.total_actual_seconds)}</div>
+      <div class="mw-now-actions">
+        <button type="button" class="btn-primary" onclick="quickPauseTask('${t.id}')">Pause</button>
+        <button type="button" class="btn-primary" onclick="quickCompleteTask('${t.id}')">Complete</button>
+        <button type="button" class="btn-secondary" onclick="openTaskDetail('${t.id}')">Open</button>
+      </div>`;
+  } else if (myWork.recommended_now) {
+    const r = myWork.recommended_now, t = r.task;
+    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+    const isPinned = myWork.pinned_task_id === t.id;
+    card.innerHTML = `
+      <div class="mw-now-label recommended">RECOMMENDED NOW</div>
+      <div class="mw-now-title">${esc(t.title)}</div>
+      <div class="mw-now-meta">${job ? `${job.id} · ${esc(job.title)}` : 'General Office Task'}</div>
+      <div class="mw-now-reason">${esc(reasonsToText(r.reasons))}</div>
+      <div class="mw-now-actions">
+        <button type="button" class="btn-primary" onclick="quickStartTask('${t.id}')">Start Work</button>
+        ${isPinned
+          ? `<button type="button" class="btn-secondary" onclick="unpinDoNext()">Unpin</button>`
+          : `<button type="button" class="btn-secondary" onclick="pinDoNext('${t.id}')">Do Next</button>`}
+        <button type="button" class="btn-secondary" onclick="openTaskDetail('${t.id}')">Open</button>
+      </div>`;
+  } else {
+    card.innerHTML = '<div class="mw-now-label recommended">NOW</div><div style="padding:8px 0;color:rgba(255,255,255,.8)">No actionable tasks right now — nice work.</div>';
+  }
+}
+
+function myWorkItemCardHtml(r, rank) {
+  const t = r.task;
+  const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+  const isPinned = myWork && myWork.pinned_task_id === t.id;
+  return `
+    <div class="mw-item-card" onclick="openTaskDetail('${t.id}')">
+      <div class="mw-item-rank">${rank}</div>
+      <div class="mw-item-body">
+        <div class="mw-item-title">${esc(t.title)}${isPinned ? ' 📌' : ''}</div>
+        <div class="mw-item-meta">${job ? `${job.id} · ${esc(job.title)}` : 'General Office Task'} · ${esc(taskTypeLabel(t.task_type))}${t.expected_minutes ? ' · ' + esc(formatTaskDuration(t.expected_minutes)) : ''}</div>
+        <div class="mw-item-reason">${esc(reasonsToText(r.reasons))}</div>
+      </div>
+      <div class="mw-item-actions" onclick="event.stopPropagation()">
+        <button type="button" class="btn-secondary" onclick="quickStartTask('${t.id}')">Start Work</button>
+      </div>
+    </div>`;
+}
+
+function renderNextSection() {
+  const el = document.getElementById('mw-next-list');
+  if (!el) return;
+  const items = (myWork && myWork.next) || [];
+  el.innerHTML = items.length === 0
+    ? '<div class="task-empty">Nothing else queued.</div>'
+    : items.map((r, i) => myWorkItemCardHtml(r, i + 1)).join('');
+}
+
+function mwCompactRowHtml(r) {
+  const t = r.task;
+  const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+  const due = taskDueLabel(t);
+  return `<div class="mw-compact-row" onclick="openTaskDetail('${t.id}')">
+    <span class="mw-compact-title">${esc(t.title)}</span>
+    <span class="mw-compact-meta">${job ? esc(job.id) : 'Office'}${due ? ' · ' + esc(due) : ''}${t.expected_minutes ? ' · ' + esc(formatTaskDuration(t.expected_minutes)) : ''}</span>
+  </div>`;
+}
+function renderLaterSection() {
+  const el = document.getElementById('mw-later-list');
+  const toggle = document.getElementById('mw-later-toggle');
+  if (!el) return;
+  const items = (myWork && myWork.later) || [];
+  if (items.length === 0) {
+    el.innerHTML = '<div class="task-empty">Nothing else.</div>';
+    if (toggle) toggle.hidden = true;
+    return;
+  }
+  const shown = laterExpanded ? items : items.slice(0, 5);
+  el.innerHTML = shown.map(mwCompactRowHtml).join('');
+  if (toggle) {
+    toggle.hidden = items.length <= 5;
+    toggle.textContent = laterExpanded ? 'Show less' : `Show all (${items.length})`;
+  }
+}
+
+function renderWaitingBlockedSection() {
+  const el = document.getElementById('mw-waiting-blocked');
+  if (!el) return;
+  const waitingItems = (myWork && myWork.waiting) || [];
+  const blockedItems = (myWork && myWork.blocked) || [];
+  if (waitingItems.length === 0 && blockedItems.length === 0) {
+    el.innerHTML = '<div class="task-empty">Nothing waiting or blocked.</div>';
+    return;
+  }
+  const waitingHtml = waitingItems.map(w => {
+    const t = w.task;
+    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+    const since = w.waiting_since ? new Date(w.waiting_since).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : null;
+    return `<div class="mw-wb-row" onclick="openTaskDetail('${t.id}')">
+      <div class="mw-wb-title">${esc(t.title)} ${job ? `<span class="log-job-link" onclick="event.stopPropagation();openJob('${job.id}')">${job.id}</span>` : ''}</div>
+      <div class="mw-wb-detail">${esc(t.waiting_reason || 'Waiting')}${since ? ` · Waiting since ${since}` : ''}</div>
+    </div>`;
+  }).join('');
+  const blockedHtml = blockedItems.map(b => {
+    const t = b.task;
+    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+    return `<div class="mw-wb-row" onclick="openTaskDetail('${t.id}')">
+      <div class="mw-wb-title">${esc(t.title)} ${job ? `<span class="log-job-link" onclick="event.stopPropagation();openJob('${job.id}')">${job.id}</span>` : ''}</div>
+      <div class="mw-wb-detail">Blocked by: ${b.blocker ? esc(b.blocker.title) : '—'}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = waitingHtml + blockedHtml;
+}
+
+function renderClosedClaimSection() {
+  const wrap = document.getElementById('mw-closed-claim-wrap');
+  if (!wrap) return;
+  const items = (myWork && myWork.closed_claim_exceptional) || [];
+  if (items.length === 0) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  document.getElementById('mw-closed-claim-list').innerHTML = items.map(t => {
+    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+    return `<div class="mw-wb-row" onclick="openTaskDetail('${t.id}')">
+      <div class="mw-wb-title">${esc(t.title)} ${job ? `<span class="log-job-link" onclick="event.stopPropagation();openJob('${job.id}')">${job.id}</span>` : ''}</div>
+      <div class="mw-wb-detail">Linked claim is closed</div>
+    </div>`;
+  }).join('');
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
