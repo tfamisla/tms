@@ -1412,13 +1412,23 @@ async function updateTask(db, id, body, user) {
     const wasCompleted = oldStatus === 'completed';
     const wasCancelled = oldStatus === 'cancelled';
 
+    // V1.3: Completed/Cancelled/Waiting are all invalid states for an
+    // active work session (see the valid-state table in HANDOFF_NOTES.md)
+    // — close every open session on this task (any staff member, not just
+    // the actor) whenever the task transitions into one of them. Task
+    // status and live work status are otherwise fully decoupled: setting
+    // In Progress here never starts a timer, and Pause never reverts
+    // status — only these three transitions force a session closure.
     if (nextStatus === 'completed') {
       completedAt = now; completedBy = user.id;
+      await closeAllActiveSessionsForTask(db, id, 'task_completed', now);
       actEntries.push({ text: `Task completed by ${user.id}.`, ts: now, actor: who });
     } else if (nextStatus === 'cancelled') {
       cancelledAt = now; cancelledBy = user.id;
+      await closeAllActiveSessionsForTask(db, id, 'cancelled', now);
       actEntries.push({ text: 'Task cancelled.', ts: now, actor: who });
     } else if (nextStatus === 'waiting') {
+      await closeAllActiveSessionsForTask(db, id, 'paused', now);
       actEntries.push({ text: `Task moved to Waiting — ${waitingReason}.`, ts: now, actor: who });
     } else if (wasCompleted) {
       actEntries.push({ text: `Task reopened by ${user.id}.`, ts: now, actor: who });
@@ -1456,6 +1466,17 @@ async function updateTask(db, id, body, user) {
     const changed = assigneeIds.length !== currentAssignees.length
       || assigneeIds.some(a => !currentAssignees.includes(a));
     if (changed) {
+      // Never leave someone actively timing a task they're no longer
+      // assigned to — close their session before the reassignment.
+      const removed = currentAssignees.filter(a => !assigneeIds.includes(a));
+      for (const staffId of removed) {
+        const activeSession = await db.prepare('SELECT * FROM task_work_sessions WHERE task_id = ? AND staff_id = ? AND ended_at IS NULL')
+          .bind(id, staffId).first();
+        if (activeSession) {
+          await closeWorkSession(db, activeSession, 'assignment_removed', now);
+          actEntries.push({ text: `${staffId}'s active work session closed — no longer assigned to this task.`, ts: now, actor: who });
+        }
+      }
       await db.prepare('DELETE FROM task_assignees WHERE task_id = ?').bind(id).run();
       for (const staffId of assigneeIds) {
         await db.prepare('INSERT INTO task_assignees (task_id, staff_id, assigned_at, assigned_by) VALUES (?,?,?,?)')
@@ -1469,6 +1490,180 @@ async function updateTask(db, id, body, user) {
   if (actEntries.length > 0) await appendTaskActivity(db, id, actEntries);
 
   return getTaskWithDetails(db, id);
+}
+
+// ── WORK SESSIONS / LIVE WORKING (V1.3) ─────────────────────────────
+// Normalized history in `task_work_sessions` is the sole source of truth
+// for actual time — no redundant timer fields on `tasks`. An active
+// session is `ended_at IS NULL`; live elapsed time is always derived
+// (now - started_at) at read time, never continuously written. The
+// invariant "at most one open session per staff member" is enforced both
+// here (check-then-act) and at the database level (a partial UNIQUE INDEX
+// over `staff_id WHERE ended_at IS NULL` — see schema.sql/migration 014):
+// the index is the real backstop under request-level races; this
+// application logic is the primary, friendlier-error-message layer.
+const WORK_END_REASONS = ['paused', 'switched_task', 'task_completed', 'cancelled', 'assignment_removed', 'manual_correction'];
+
+async function getActiveSessionForStaff(db, staffId) {
+  return db.prepare('SELECT * FROM task_work_sessions WHERE staff_id = ? AND ended_at IS NULL').bind(staffId).first();
+}
+
+async function closeWorkSession(db, session, endReason, now) {
+  const durationSeconds = Math.max(0, Math.round((now - session.started_at) / 1000));
+  await db.prepare('UPDATE task_work_sessions SET ended_at = ?, duration_seconds = ?, end_reason = ?, updated_at = ? WHERE id = ?')
+    .bind(now, durationSeconds, endReason, now, session.id).run();
+  return { ...session, ended_at: now, duration_seconds: durationSeconds, end_reason: endReason };
+}
+
+// Closes every currently-open session on a task, for every staff member —
+// used when a task becomes Waiting/Completed/Cancelled, since none of
+// those states may coexist with an active session (see the valid-state
+// table this version introduces).
+async function closeAllActiveSessionsForTask(db, taskId, endReason, now) {
+  const { results } = await db.prepare('SELECT * FROM task_work_sessions WHERE task_id = ? AND ended_at IS NULL').bind(taskId).all();
+  const closed = [];
+  for (const s of results) closed.push(await closeWorkSession(db, s, endReason, now));
+  return closed;
+}
+
+async function listTaskWorkSessions(db, taskId) {
+  const { results } = await db.prepare('SELECT * FROM task_work_sessions WHERE task_id = ? ORDER BY started_at ASC').bind(taskId).all();
+  return results;
+}
+
+// The single most-recently-active-set query, reused by both the global
+// active-work bar (current user) and Live Team (everyone).
+async function listLiveWork(db) {
+  const { results } = await db.prepare('SELECT * FROM task_work_sessions WHERE ended_at IS NULL ORDER BY started_at ASC').all();
+  const enriched = [];
+  for (const s of results) {
+    const task = await db.prepare('SELECT id, title, task_type, priority, due_date, due_time, expected_minutes, job_id, status FROM tasks WHERE id = ?')
+      .bind(s.task_id).first();
+    enriched.push({ ...s, task: task || null });
+  }
+  return enriched;
+}
+
+// Full session history, most recent first — mirrors listLog()'s exact
+// capping convention (500 rows) for the Work Log page's Task Work
+// subsection and the per-user Daily Work Summary. Raw rows only; the
+// frontend enriches via the already-loaded tasks/jobs/TEAM arrays, same
+// pattern as listLog()'s job activity feed.
+async function listAllWorkSessions(db) {
+  const { results } = await db.prepare('SELECT * FROM task_work_sessions ORDER BY started_at DESC LIMIT 500').all();
+  return results;
+}
+
+// Start and Resume are the same underlying operation (per spec): if the
+// user already has an active session on a DIFFERENT task, it's closed
+// with end_reason='switched_task' before the new one opens — the user
+// never has to manually pause first. Starting a Waiting task is treated
+// as an explicit Resume: status moves to In Progress and the waiting
+// reason clears.
+async function startOrResumeWork(db, taskId, user) {
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
+  if (!task) throw new Error('task not found');
+  if (task.status === 'completed') throw new Error('Cannot start work on a completed task');
+  if (task.status === 'cancelled') throw new Error('Cannot start work on a cancelled task');
+
+  const { results: assigneeRows } = await db.prepare('SELECT staff_id FROM task_assignees WHERE task_id = ?').bind(taskId).all();
+  if (!assigneeRows.some(r => r.staff_id === user.id)) throw new Error('You are not assigned to this task');
+
+  const now = Date.now();
+
+  const existingActive = await getActiveSessionForStaff(db, user.id);
+  if (existingActive && existingActive.task_id === taskId) {
+    // Already actively working this exact task — no duplicate session.
+    return { session: existingActive, task: await getTaskWithDetails(db, taskId), pausedPrevious: null };
+  }
+
+  let pausedPrevious = null;
+  if (existingActive) {
+    const prevTask = await db.prepare('SELECT id, title FROM tasks WHERE id = ?').bind(existingActive.task_id).first();
+    await closeWorkSession(db, existingActive, 'switched_task', now);
+    pausedPrevious = { task_id: existingActive.task_id, title: prevTask ? prevTask.title : null };
+    await appendTaskActivity(db, existingActive.task_id, [{
+      text: `${user.id} switched to another task; work session paused.`, ts: now, actor: user.id,
+    }]);
+  }
+
+  const sessionId = `WS-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    await db.prepare('INSERT INTO task_work_sessions (id, task_id, staff_id, started_at, created_at, updated_at) VALUES (?,?,?,?,?,?)')
+      .bind(sessionId, taskId, user.id, now, now, now).run();
+  } catch (e) {
+    if (/UNIQUE/i.test(e.message || '')) {
+      throw new Error('You already have an active work session — please refresh and try again');
+    }
+    throw e;
+  }
+
+  const actEntries = [{ text: `${user.id} started working on this task.`, ts: now, actor: user.id }];
+  const sets = ['updated_at = ?'];
+  const values = [now];
+  if (task.status === 'not_started') {
+    sets.push('status = ?'); values.push('in_progress');
+  } else if (task.status === 'waiting') {
+    sets.push('status = ?', 'waiting_reason = ?'); values.push('in_progress', '');
+    actEntries.push({ text: `Task resumed from Waiting — ${user.id} started working.`, ts: now, actor: user.id });
+  }
+  if (sets.length > 1) {
+    values.push(taskId);
+    await db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
+  }
+  await appendTaskActivity(db, taskId, actEntries);
+
+  const session = await db.prepare('SELECT * FROM task_work_sessions WHERE id = ?').bind(sessionId).first();
+  return { session, task: await getTaskWithDetails(db, taskId), pausedPrevious };
+}
+
+// Only the authenticated user's own active session, and only on the task
+// named in the URL — a user can never pause anyone else's timer through
+// this action (Admin/Director corrections are a distinct mechanism).
+async function pauseWork(db, taskId, user) {
+  const active = await getActiveSessionForStaff(db, user.id);
+  if (!active || active.task_id !== taskId) throw new Error('No active work session on this task');
+  const now = Date.now();
+  const closed = await closeWorkSession(db, active, 'paused', now);
+  await appendTaskActivity(db, taskId, [{ text: `${user.id} paused work on this task.`, ts: now, actor: user.id }]);
+  return { session: closed, task: await getTaskWithDetails(db, taskId) };
+}
+
+// Admin/Director-only. Doubles as both "correct a completed session's
+// timestamps" (per-spec Manual Session Correction) and "force-close a
+// runaway active session" (per-spec Stop Session) — supplying `ended_at`
+// on a still-open session is exactly a stop-session action, and both
+// paths share the same mandatory-reason, never-silent, audit-logged
+// discipline. Sessions are never hard-deleted, only corrected in place.
+async function correctWorkSession(db, sessionId, body, user) {
+  if (!isAdmin(user) && !isDirectorRole(user)) throw new Error('Only an Admin or Director may correct a work session');
+  const session = await db.prepare('SELECT * FROM task_work_sessions WHERE id = ?').bind(sessionId).first();
+  if (!session) throw new Error('work session not found');
+
+  const reason = (body.adjustment_reason || '').trim();
+  if (!reason) throw new Error('Adjustment Reason is required');
+
+  const startedAt = body.started_at !== undefined ? Number(body.started_at) : session.started_at;
+  if (!Number.isFinite(startedAt)) throw new Error('Started At must be a valid timestamp');
+  let endedAt = session.ended_at;
+  if (body.ended_at !== undefined) endedAt = body.ended_at === null ? null : Number(body.ended_at);
+  if (endedAt !== null && !Number.isFinite(endedAt)) throw new Error('Ended At must be a valid timestamp');
+  if (endedAt !== null && endedAt < startedAt) throw new Error('Ended At cannot be before Started At');
+
+  const now = Date.now();
+  const durationSeconds = endedAt !== null ? Math.max(0, Math.round((endedAt - startedAt) / 1000)) : null;
+  const endReason = endedAt !== null ? 'manual_correction' : session.end_reason;
+
+  await db.prepare(`
+    UPDATE task_work_sessions SET started_at = ?, ended_at = ?, duration_seconds = ?, end_reason = ?,
+      adjusted_by = ?, adjustment_reason = ?, updated_at = ? WHERE id = ?
+  `).bind(startedAt, endedAt, durationSeconds, endReason, user.id, reason, now, sessionId).run();
+
+  await appendTaskActivity(db, session.task_id, [{
+    text: `Work session corrected by ${user.id} — ${reason}.`, ts: now, actor: user.id,
+  }]);
+
+  return db.prepare('SELECT * FROM task_work_sessions WHERE id = ?').bind(sessionId).first();
 }
 
 async function getSetting(db, key) {
@@ -1984,6 +2179,48 @@ export default {
       if (pathname === '/api/tasks' && request.method === 'POST') {
         const body = await request.json();
         return json(await createTask(db, body, user), 201);
+      }
+
+      {
+        const startMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/start\/?$/);
+        if (startMatch && request.method === 'POST') {
+          const taskId = decodeURIComponent(startMatch[1]);
+          const result = await startOrResumeWork(db, taskId, user);
+          return json({ ok: true, task: result.task, session: result.session, paused_previous: result.pausedPrevious });
+        }
+
+        const pauseMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/pause\/?$/);
+        if (pauseMatch && request.method === 'POST') {
+          const taskId = decodeURIComponent(pauseMatch[1]);
+          const result = await pauseWork(db, taskId, user);
+          return json({ ok: true, task: result.task, session: result.session });
+        }
+
+        const wsMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/work-sessions\/?$/);
+        if (wsMatch && request.method === 'GET') {
+          const taskId = decodeURIComponent(wsMatch[1]);
+          return json(await listTaskWorkSessions(db, taskId));
+        }
+      }
+
+      if (pathname === '/api/work/current' && request.method === 'GET') {
+        const session = await getActiveSessionForStaff(db, user.id);
+        if (!session) return json(null);
+        return json({ session, task: await getTaskWithDetails(db, session.task_id) });
+      }
+
+      if (pathname === '/api/work/live' && request.method === 'GET') {
+        return json(await listLiveWork(db));
+      }
+
+      if (pathname === '/api/work/sessions' && request.method === 'GET') {
+        return json(await listAllWorkSessions(db));
+      }
+
+      if (pathname.startsWith('/api/work-sessions/') && request.method === 'PUT') {
+        const id = decodeURIComponent(pathname.slice('/api/work-sessions/'.length));
+        const body = await request.json();
+        return json(await correctWorkSession(db, id, body, user));
       }
 
       {

@@ -364,3 +364,39 @@ CREATE TABLE IF NOT EXISTS task_activity (
   FOREIGN KEY (task_id) REFERENCES tasks(id)
 );
 CREATE INDEX IF NOT EXISTS idx_task_activity_task ON task_activity (task_id);
+
+-- ── Task Work Sessions (V1.3) ───────────────────────────────────
+-- Normalized work-session history — the source of truth for actual time
+-- spent. An active session is `ended_at IS NULL`; live elapsed time is
+-- always derived (now - started_at), never continuously written. A closed
+-- session's duration_seconds is computed once, server-side, from
+-- (ended_at - started_at) at close time. Sessions are never hard-deleted
+-- — corrections (Admin/Director only) update the row in place and record
+-- who/why via adjusted_by/adjustment_reason, never silently.
+CREATE TABLE IF NOT EXISTS task_work_sessions (
+  id                TEXT    PRIMARY KEY,
+  task_id           TEXT    NOT NULL,
+  staff_id          TEXT    NOT NULL,
+  started_at        INTEGER NOT NULL,
+  ended_at          INTEGER,             -- NULL = this is the staff member's one active session
+  duration_seconds  INTEGER,             -- NULL while active; computed once on close
+  end_reason        TEXT    DEFAULT '',  -- 'paused'|'switched_task'|'task_completed'|'cancelled'|'assignment_removed'|'manual_correction'
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  adjusted_by       TEXT    DEFAULT '',  -- staff id, set only via the Admin/Director correction endpoint
+  adjustment_reason TEXT    DEFAULT '',
+  FOREIGN KEY (task_id) REFERENCES tasks(id),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_work_sessions_task    ON task_work_sessions (task_id);
+CREATE INDEX IF NOT EXISTS idx_task_work_sessions_staff   ON task_work_sessions (staff_id);
+CREATE INDEX IF NOT EXISTS idx_task_work_sessions_started ON task_work_sessions (started_at);
+CREATE INDEX IF NOT EXISTS idx_task_work_sessions_ended   ON task_work_sessions (ended_at);
+-- The actual "one active session per staff member" invariant — a second,
+-- database-level safety net beneath the application-level check in
+-- startOrResumeWork(). A partial unique index over rows where ended_at IS
+-- NULL means SQLite/D1 itself rejects a second concurrently-open row for
+-- the same staff_id, even under a race between two near-simultaneous
+-- requests.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_work_sessions_one_active_per_staff
+  ON task_work_sessions (staff_id) WHERE ended_at IS NULL;

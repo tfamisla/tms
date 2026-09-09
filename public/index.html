@@ -244,6 +244,36 @@ details.sp-section[open] summary{margin-bottom:0}
 .task-dash-num{font-size:20px;font-weight:700;color:var(--text-pri)}
 .task-dash-lbl{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em}
 
+/* ── LIVE WORKING (V1.3) ── */
+.active-work-bar{display:flex;align-items:center;gap:12px;background:var(--navy);color:#fff;padding:8px 16px;font-size:12.5px;flex-wrap:wrap}
+.active-work-bar[hidden]{display:none!important}
+.awb-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;color:var(--amber-lt);font-weight:700}
+.awb-title{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.awb-timer{font-family:'DM Mono',monospace;font-size:13px;color:var(--amber-lt);font-weight:600}
+.awb-actions{display:flex;gap:6px}
+.awb-actions .btn-secondary{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#fff;padding:5px 12px;font-size:12px}
+.task-live-row{font-size:11.5px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
+.task-live-row.working{color:var(--green);font-weight:600;display:flex;align-items:center;gap:8px}
+.task-live-row.working .task-live-badge{font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:.06em}
+.task-live-row.working .task-live-timer{font-family:'DM Mono',monospace}
+.task-live-row.other{color:var(--blue)}
+.task-live-row.idle{color:var(--text-faint)}
+.task-card-actions{display:flex;gap:6px;margin-top:8px}
+.task-card-actions .btn-secondary{padding:5px 12px;font-size:11.5px}
+.live-team-list{display:flex;flex-direction:column;gap:8px}
+.live-team-row{background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.live-team-row:hover{border-color:var(--amber)}
+.live-team-staff{display:flex;align-items:center;gap:8px;min-width:160px}
+.live-team-task{flex:1;min-width:180px;font-size:12.5px}
+.live-team-timer{font-family:'DM Mono',monospace;font-size:13px;color:var(--green);font-weight:600}
+.live-team-long{color:var(--amber);font-size:10.5px;font-weight:600}
+.work-history-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.work-history-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);padding:4px 8px;border-bottom:1px solid var(--border)}
+.work-history-table td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+.wh-correct-btn{background:none;border:none;color:var(--amber);cursor:pointer;font-size:11px;text-decoration:underline;padding:0}
+.daily-summary-bar{display:flex;gap:20px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px}
+.daily-summary-bar strong{display:block;font-size:16px;color:var(--text-pri)}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -298,6 +328,18 @@ details.sp-section[open] summary{margin-bottom:0}
   </div>
 </div>
 
+<!-- ── ACTIVE WORK BAR (V1.3) — persists across every view; not part of
+     any .view container, so switchView() never hides it. ── -->
+<div class="active-work-bar" id="activeWorkBar" hidden>
+  <span class="awb-label">WORKING NOW</span>
+  <span class="awb-title" id="awb-title"></span>
+  <span class="awb-timer" id="awb-timer">00:00:00</span>
+  <div class="awb-actions">
+    <button type="button" class="btn-secondary" onclick="pauseCurrentWork()">Pause</button>
+    <button type="button" class="btn-secondary" onclick="openCurrentWorkTask()">Open Task</button>
+  </div>
+</div>
+
 <!-- Stats Strip -->
 <div class="stats-strip" id="statsStrip"></div>
 
@@ -320,9 +362,11 @@ details.sp-section[open] summary{margin-bottom:0}
       <div class="task-mode-toggle">
         <button class="task-mode-btn active" id="taskModeMyBtn" onclick="setTaskViewMode('my')">My Tasks</button>
         <button class="task-mode-btn" id="taskModeAllBtn" onclick="setTaskViewMode('all')">All Tasks</button>
+        <button class="task-mode-btn" id="taskModeLiveBtn" onclick="setTaskViewMode('live')">Live Team</button>
       </div>
       <button class="btn-new" onclick="openTaskForm()">+ Add Task</button>
     </div>
+    <div class="daily-summary-bar" id="dailySummaryBar" hidden></div>
     <div class="task-filters" id="taskFilters" hidden>
       <select class="log-filter-sel" id="tf-assignee" onchange="renderTasksView()">
         <option value="">All assignees</option>
@@ -394,6 +438,23 @@ details.sp-section[open] summary{margin-bottom:0}
       </select>
     </div>
     <div class="log-list" id="logList"></div>
+
+    <!-- ── Task Work subsection (V1.3) — additive; the log above is
+         untouched, this is a separate list backed by task_work_sessions ── -->
+    <div class="sp-section-label" style="margin-top:28px">Task Work</div>
+    <div class="log-toolbar">
+      <select class="log-filter-sel" id="twMemberFilter" onchange="renderTaskWorkLog()">
+        <option value="">All members</option>
+      </select>
+      <select class="log-filter-sel" id="twJobFilter" onchange="renderTaskWorkLog()">
+        <option value="">All jobs</option>
+      </select>
+      <select class="log-filter-sel" id="twTypeFilter" onchange="renderTaskWorkLog()">
+        <option value="">All task types</option>
+      </select>
+      <input class="log-filter-sel" type="date" id="twDateFilter" onchange="renderTaskWorkLog()">
+    </div>
+    <div class="log-list" id="taskWorkLogList"></div>
   </div>
 </div>
 
@@ -1299,6 +1360,13 @@ details.sp-section[open] summary{margin-bottom:0}
         <div class="progress-grid" id="td-meta"></div>
       </div>
       <div class="sp-section">
+        <div class="sp-section-label">Work Sessions / Work History</div>
+        <div class="progress-grid" id="td-work-summary" style="margin-bottom:10px"></div>
+        <div style="overflow-x:auto">
+          <table class="work-history-table" id="td-work-table"></table>
+        </div>
+      </div>
+      <div class="sp-section">
         <div class="sp-section-label">Activity History</div>
         <div class="activity-feed" id="td-activity"></div>
       </div>
@@ -1374,8 +1442,14 @@ let editingFeeReceiptId = null;
 let closingJobId = null;
 let editingVisitId = null;
 let tasks = [];
-let taskViewMode = 'my';   // 'my' | 'all'
+let taskViewMode = 'my';   // 'my' | 'all' | 'live'
 let editingTaskId = null;
+let liveWork = [];         // every currently-open work session, all staff (from /api/work/live)
+let workSessions = [];     // recent session history, most-recent-first, capped 500 (from /api/work/sessions)
+let taskWorkSessionsCache = []; // sessions for the Task Detail modal currently open (on-demand fetch)
+let editingSessionId = null;     // work session currently being corrected inline (Admin/Director only)
+let awbTimerInterval = null;     // ticking interval for the global Active Work Bar
+let taskCardTimerInterval = null; // ticking interval for "WORKING NOW" badges on task cards
 
 // ── TASKS (V1.2) — authoritative TFAM Task Type Master, mirrors worker.js ──
 const TASK_TYPES = [
@@ -1501,11 +1575,14 @@ function onLoggedIn() {
   buildLogFilters();
   fetchAll();
   if (!pollTimer) pollTimer = setInterval(fetchAll, 5000);
+  if (!taskCardTimerInterval) startTaskCardTimers();
 }
 
 function sessionExpired() {
   clearInterval(pollTimer);
   pollTimer = null;
+  stopTaskCardTimers();
+  stopAwbTimer();
   currentUser = null;
   currentUserRecord = null;
   showLogin();
@@ -1519,7 +1596,7 @@ async function logout() {
 // ── API CALLS ─────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes] = await Promise.all([
+    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes] = await Promise.all([
       fetch(API + '/api/jobs'),
       fetch(API + '/api/log'),
       fetch(API + '/api/staff'),
@@ -1527,9 +1604,12 @@ async function fetchAll() {
       fetch(API + '/api/branches'),
       fetch(API + '/api/settings'),
       fetch(API + '/api/tasks'),
+      fetch(API + '/api/work/live'),
+      fetch(API + '/api/work/sessions'),
     ]);
-    if ([jRes, lRes, sRes, iRes, bRes, setRes, tRes].some(r => r.status === 401)) { sessionExpired(); return; }
-    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok || !bRes.ok || !setRes.ok || !tRes.ok) throw new Error('bad response');
+    const all = [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes];
+    if (all.some(r => r.status === 401)) { sessionExpired(); return; }
+    if (all.some(r => !r.ok)) throw new Error('bad response');
     jobs = await jRes.json();
     log  = await lRes.json();
     TEAM = await sRes.json();
@@ -1537,6 +1617,8 @@ async function fetchAll() {
     BRANCHES = await bRes.json();
     SETTINGS = await setRes.json();
     tasks = await tRes.json();
+    liveWork = await liveRes.json();
+    workSessions = await wsRes.json();
     setOnline(true);
     buildLogFilters();
     buildInsurerList();
@@ -1605,8 +1687,10 @@ function renderAll() {
   renderKanban();
   renderStaff();
   renderLog();
+  renderTaskWorkLog();
   renderTaskDashWidget();
   renderTasksView();
+  renderActiveWorkBar();
 }
 
 // ── STATS STRIP ───────────────────────────────────────────────
@@ -1797,6 +1881,67 @@ function renderLog() {
           <span class="log-text">
             ${esc(e.text)}
             ${e.job_id ? `<span class="log-job-link" onclick="openJob('${e.job_id}')">${e.job_id}</span>` : ''}
+          </span>
+        </div>`;
+      }).join('');
+}
+
+// ── Task Work subsection of Work Log (V1.3) — additive, separate from the
+// job-activity log above; backed by task_work_sessions, not jobs.activity.
+// Raw session rows are enriched client-side via already-loaded
+// tasks/jobs/TEAM, same "server sends ids, client enriches" pattern as the
+// log above. Only completed (ended) sessions are shown here — an active
+// session belongs on the Active Work Bar/Live Team, not history.
+function renderTaskWorkLog() {
+  const listEl = document.getElementById('taskWorkLogList');
+  if (!listEl) return;
+
+  const mSel = document.getElementById('twMemberFilter');
+  if (mSel && mSel.options.length <= 1) {
+    mSel.innerHTML = '<option value="">All members</option>' + TEAM.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  }
+  const jSel = document.getElementById('twJobFilter');
+  const curJf = jSel.value;
+  jSel.innerHTML = '<option value="">All jobs</option>' + jobs.map(j => `<option value="${j.id}">${j.id} — ${esc(j.title)}</option>`).join('');
+  jSel.value = curJf;
+  const tSel = document.getElementById('twTypeFilter');
+  if (tSel && tSel.options.length <= 1) {
+    tSel.innerHTML = '<option value="">All task types</option>' + TASK_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+  }
+
+  const mf = document.getElementById('twMemberFilter')?.value || '';
+  const jf = document.getElementById('twJobFilter')?.value || '';
+  const tf = document.getElementById('twTypeFilter')?.value || '';
+  const df = document.getElementById('twDateFilter')?.value || '';
+
+  let sessions = workSessions.filter(s => s.ended_at); // history only, not the live one
+  if (mf) sessions = sessions.filter(s => s.staff_id === mf);
+  if (df) sessions = sessions.filter(s => new Date(s.started_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === df);
+  if (jf || tf) {
+    sessions = sessions.filter(s => {
+      const t = tasks.find(x => x.id === s.task_id);
+      if (!t) return false;
+      if (jf && t.job_id !== jf) return false;
+      if (tf && t.task_type !== tf) return false;
+      return true;
+    });
+  }
+
+  listEl.innerHTML = sessions.length === 0
+    ? '<div style="padding:20px 0;color:var(--text-faint);font-size:13px">No tracked work sessions found.</div>'
+    : sessions.map(s => {
+        const m = teamMember(s.staff_id);
+        const t = tasks.find(x => x.id === s.task_id);
+        const job = t && t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+        const startedLabel = new Date(s.started_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const endedLabel = new Date(s.ended_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+        return `
+        <div class="log-entry">
+          <span class="log-ts">${startedLabel}–${endedLabel}</span>
+          <span class="log-actor">${m ? m.initials : (s.staff_id || '—')}</span>
+          <span class="log-text">
+            ${t ? esc(t.title) : '(task removed)'} — ${formatDurationSeconds(s.duration_seconds)}
+            ${job ? `<span class="log-job-link" onclick="openJob('${job.id}')">${job.id}</span>` : ''}
           </span>
         </div>`;
       }).join('');
@@ -3176,17 +3321,28 @@ async function openTaskDetail(taskId) {
   document.getElementById('td-blocked-by').innerHTML = '<option value="">— None —</option>' + taskBlockedByOptionsHtml(t.id, t.blocked_by_task_id);
   document.getElementById('td-completion-note').value = t.completion_note || '';
 
-  const qa = [];
-  if (t.status === 'not_started') qa.push(['Start (In Progress)', 'in_progress']);
-  if (t.status === 'in_progress') { qa.push(['Complete', 'completed']); qa.push(['Move to Waiting', 'waiting']); }
-  if (t.status === 'waiting') qa.push(['Resume (In Progress)', 'in_progress']);
-  if (!['completed', 'cancelled'].includes(t.status)) qa.push(['Complete', 'completed']);
-  const seen = new Set();
-  const uniqueQa = qa.filter(([, s]) => (seen.has(s) ? false : (seen.add(s), true)));
-  document.getElementById('td-quick-actions').innerHTML =
-    uniqueQa.map(([label, status]) => `<button type="button" class="btn-secondary" onclick="quickSetTaskStatus('${t.id}','${status}')">${label}</button>`).join('')
-    + (t.status === 'completed' ? `<button type="button" class="btn-secondary" onclick="quickSetTaskStatus('${t.id}','in_progress')">Reopen</button>` : '')
-    + (!['cancelled'].includes(t.status) ? `<button type="button" class="btn-secondary" style="color:var(--red)" onclick="quickSetTaskStatus('${t.id}','cancelled')">Cancel Task</button>` : '');
+  // V1.3: live-work Start/Pause/Resume take priority for the assigned
+  // user; a generic status-based Complete/Waiting/Reopen/Cancel set
+  // (unchanged from V1.2, via quickSetTaskStatus -> PUT) remains available
+  // regardless of assignment, matching "complete without ever having
+  // timed it" (item 14) and the app's broad collaborative-edit philosophy.
+  const mineSession = myActiveSession();
+  const isMine = mineSession && mineSession.task_id === t.id;
+  const isAssigned = (t.assignee_ids || []).includes(currentUser);
+  const qaButtons = [];
+  if (isMine) {
+    qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickPauseTask('${t.id}')">Pause</button>`);
+    qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickCompleteTask('${t.id}')">Complete</button>`);
+  } else {
+    if (isAssigned && t.status === 'not_started') qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickStartTask('${t.id}')">Start Work</button>`);
+    if (isAssigned && t.status === 'in_progress') qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickStartTask('${t.id}')">Resume</button>`);
+    if (isAssigned && t.status === 'waiting') qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickStartTask('${t.id}')">Resume Work</button>`);
+    if (!['completed', 'cancelled'].includes(t.status)) qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickSetTaskStatus('${t.id}','completed')">Complete</button>`);
+    if (t.status === 'in_progress') qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickSetTaskStatus('${t.id}','waiting')">Move to Waiting</button>`);
+  }
+  if (t.status === 'completed') qaButtons.push(`<button type="button" class="btn-secondary" onclick="quickSetTaskStatus('${t.id}','in_progress')">Reopen</button>`);
+  if (t.status !== 'cancelled') qaButtons.push(`<button type="button" class="btn-secondary" style="color:var(--red)" onclick="quickSetTaskStatus('${t.id}','cancelled')">Cancel Task</button>`);
+  document.getElementById('td-quick-actions').innerHTML = qaButtons.join('');
 
   const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
   const meta = [
@@ -3209,9 +3365,135 @@ async function openTaskDetail(taskId) {
   }).join('');
   document.getElementById('td-activity').innerHTML = activity || '<div style="font-size:12px;color:var(--text-faint)">No activity yet.</div>';
 
+  editingSessionId = null;
+  try {
+    taskWorkSessionsCache = await apiGet('/api/tasks/' + encodeURIComponent(t.id) + '/work-sessions');
+  } catch(e) {
+    taskWorkSessionsCache = [];
+  }
+  renderWorkHistoryTable(taskWorkSessionsCache);
+
   document.getElementById('taskDetailModal').hidden = false;
 }
-function closeTaskDetail() { document.getElementById('taskDetailModal').hidden = true; editingTaskId = null; }
+function closeTaskDetail() {
+  document.getElementById('taskDetailModal').hidden = true;
+  editingTaskId = null;
+  editingSessionId = null;
+  taskWorkSessionsCache = [];
+}
+
+// ── Work Sessions / Work History (Task Detail) ──
+const WORK_END_REASON_LABELS = {
+  paused: 'Paused', switched_task: 'Switched Task', task_completed: 'Completed',
+  cancelled: 'Cancelled', assignment_removed: 'Unassigned', manual_correction: 'Corrected',
+};
+function toLocalInputValue(ts) {
+  if (!ts) return '';
+  return new Date(ts - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+function canCorrectWorkSessions() {
+  return isAdminUser() || (currentUserRecord && /director/i.test(currentUserRecord.role || ''));
+}
+
+function renderWorkHistoryTable(sessions) {
+  const table = document.getElementById('td-work-table');
+  const canCorrect = canCorrectWorkSessions();
+  if (!sessions || sessions.length === 0) {
+    table.innerHTML = '<tr><td style="color:var(--text-faint);padding:8px 0;border:none">No work sessions recorded yet.</td></tr>';
+  } else {
+    const sorted = [...sessions].sort((a, b) => a.started_at - b.started_at);
+    const rows = sorted.map(s => {
+      if (editingSessionId === s.id) return workHistoryEditRowHtml(s);
+      const staff = teamMember(s.staff_id);
+      const started = new Date(s.started_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const ended = s.ended_at ? new Date(s.ended_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+      const duration = s.ended_at ? formatDurationSeconds(s.duration_seconds) : formatHHMMSS((Date.now() - s.started_at) / 1000) + ' (active)';
+      const reasonLabel = s.ended_at ? (WORK_END_REASON_LABELS[s.end_reason] || s.end_reason || '—') : 'Active';
+      return `<tr>
+        <td>${esc(staff ? staff.name : s.staff_id)}</td>
+        <td>${started}</td>
+        <td>${ended}</td>
+        <td>${duration}</td>
+        <td>${esc(reasonLabel)}${s.adjustment_reason ? `<div style="font-size:10.5px;color:var(--text-faint)">Corrected: ${esc(s.adjustment_reason)}</div>` : ''}</td>
+        <td>${canCorrect ? `<button type="button" class="wh-correct-btn" onclick="openWorkSessionCorrection('${s.id}')">${s.ended_at ? 'Correct' : 'Stop / Correct'}</button>` : ''}</td>
+      </tr>`;
+    }).join('');
+    table.innerHTML = `<thead><tr><th>Staff</th><th>Started</th><th>Ended</th><th>Duration</th><th>Reason</th><th></th></tr></thead><tbody>${rows}</tbody>`;
+  }
+
+  const totalSeconds = sessions.reduce((sum, s) => sum + (s.ended_at ? (s.duration_seconds || 0) : (Date.now() - s.started_at) / 1000), 0);
+  const byStaff = {};
+  sessions.forEach(s => {
+    const sec = s.ended_at ? (s.duration_seconds || 0) : (Date.now() - s.started_at) / 1000;
+    byStaff[s.staff_id] = (byStaff[s.staff_id] || 0) + sec;
+  });
+  const currentTask = tasks.find(t => t.id === editingTaskId);
+  const expectedMin = currentTask ? currentTask.expected_minutes : null;
+  let diffHtml = '';
+  if (expectedMin) {
+    const diffMin = Math.round(totalSeconds / 60) - expectedMin;
+    const sign = diffMin >= 0 ? '+' : '';
+    diffHtml = `<div><strong>Difference</strong><br><span style="color:${diffMin > 0 ? 'var(--red)' : 'var(--green)'}">${sign}${diffMin} min</span></div>`;
+  }
+  const perStaffHtml = Object.keys(byStaff).length > 1
+    ? `<div style="grid-column:1/-1"><strong>Per-Staff Totals</strong><br>${Object.entries(byStaff).map(([id, sec]) => `${esc(teamMember(id)?.name || id)} — ${formatDurationSeconds(sec)}`).join(' · ')}</div>`
+    : '';
+  document.getElementById('td-work-summary').innerHTML = `
+    <div><strong>Total Actual Effort</strong><br>${formatDurationSeconds(totalSeconds)}</div>
+    <div><strong>Expected</strong><br>${expectedMin ? formatTaskDuration(expectedMin) : '—'}</div>
+    ${diffHtml}
+    ${perStaffHtml}`;
+}
+
+function workHistoryEditRowHtml(s) {
+  return `<tr>
+    <td colspan="6">
+      <div class="modal-grid" style="grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:end">
+        <div class="form-field"><label>Started At</label><input type="datetime-local" id="wh-edit-start" value="${toLocalInputValue(s.started_at)}"></div>
+        <div class="form-field"><label>Ended At</label><input type="datetime-local" id="wh-edit-end" value="${toLocalInputValue(s.ended_at)}"></div>
+        <div class="form-field"><label>Adjustment Reason *</label><input id="wh-edit-reason" placeholder="Required — e.g. forgot to pause"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button type="button" class="btn-primary" style="flex:none" onclick="submitWorkSessionCorrection('${s.id}')">Save Correction</button>
+        ${!s.ended_at ? `<button type="button" class="btn-secondary" onclick="stopRunawaySessionField()">Set End = Now</button>` : ''}
+        <button type="button" class="btn-secondary" onclick="cancelWorkSessionCorrection()">Cancel</button>
+      </div>
+    </td>
+  </tr>`;
+}
+function openWorkSessionCorrection(sessionId) {
+  editingSessionId = sessionId;
+  renderWorkHistoryTable(taskWorkSessionsCache);
+}
+function cancelWorkSessionCorrection() {
+  editingSessionId = null;
+  renderWorkHistoryTable(taskWorkSessionsCache);
+}
+function stopRunawaySessionField() {
+  const endInput = document.getElementById('wh-edit-end');
+  if (endInput) endInput.value = toLocalInputValue(Date.now());
+}
+async function submitWorkSessionCorrection(sessionId) {
+  const startVal = document.getElementById('wh-edit-start').value;
+  const endVal = document.getElementById('wh-edit-end').value;
+  const reason = document.getElementById('wh-edit-reason').value.trim();
+  if (!startVal) { alert('Started At is required.'); return; }
+  if (!reason) { alert('Adjustment Reason is required.'); return; }
+  const body = {
+    started_at: new Date(startVal).getTime(),
+    ended_at: endVal ? new Date(endVal).getTime() : null,
+    adjustment_reason: reason,
+  };
+  try {
+    await apiPut('/api/work-sessions/' + encodeURIComponent(sessionId), body);
+    editingSessionId = null;
+    taskWorkSessionsCache = await apiGet('/api/tasks/' + encodeURIComponent(editingTaskId) + '/work-sessions');
+    renderWorkHistoryTable(taskWorkSessionsCache);
+    fetchAll();
+  } catch(e) {
+    alert('Error correcting session: ' + e.message);
+  }
+}
 
 async function submitTaskDetail() {
   if (!editingTaskId) return;
@@ -3269,12 +3551,15 @@ async function quickSetTaskStatus(taskId, status) {
   }
 }
 
-// ── Tasks page (My Tasks / All Tasks) ──
+// ── Tasks page (My Tasks / All Tasks / Live Team) ──
 function setTaskViewMode(mode) {
   taskViewMode = mode;
   document.getElementById('taskModeMyBtn').classList.toggle('active', mode === 'my');
   document.getElementById('taskModeAllBtn').classList.toggle('active', mode === 'all');
+  document.getElementById('taskModeLiveBtn').classList.toggle('active', mode === 'live');
   document.getElementById('taskFilters').hidden = mode !== 'all';
+  document.getElementById('taskShowCompletedWrap').hidden = mode !== 'my';
+  document.getElementById('dailySummaryBar').hidden = mode !== 'my';
   renderTasksView();
 }
 
@@ -3323,13 +3608,68 @@ function taskCardHtml(t) {
         ${t.expected_minutes ? `<span class="task-card-meta">${formatTaskDuration(t.expected_minutes)}</span>` : ''}
         ${t.is_blocked ? '<span class="task-blocked-badge">Blocked</span>' : ''}
       </div>
+      ${taskLiveIndicatorHtml(t)}
+      ${taskActionButtonsHtml(t)}
     </div>`;
+}
+
+// ── Live-work indicators + quick actions on a task card (V1.3) ──
+// "WORKING NOW" for the current user's own active task (ticking, driven by
+// a shared 1s interval — see startTaskCardTimers()); a static "{name}
+// working" note when someone else is actively timing a task visible to
+// the current user (refreshed every poll cycle, not ticked client-side,
+// to keep this compact per spec); neutral, non-judgmental wording
+// everywhere else — this is task-work tracking, not attendance/idle
+// surveillance.
+function taskLiveIndicatorHtml(t) {
+  const mine = myActiveSession();
+  if (mine && mine.task_id === t.id) {
+    return `<div class="task-live-row working"><span class="task-live-badge">WORKING NOW</span> <span class="task-live-timer" data-started="${mine.started_at}">00:00:00</span></div>`;
+  }
+  const others = liveWork.filter(s => s.task_id === t.id && s.staff_id !== currentUser);
+  if (others.length > 0) {
+    const names = others.map(s => teamMember(s.staff_id)?.name || s.staff_id);
+    const suffix = others.length === 1 ? ` · ${Math.max(0, Math.round((Date.now() - others[0].started_at) / 60000))} min` : '';
+    return `<div class="task-live-row other">${esc(names.join(', '))} working${suffix}</div>`;
+  }
+  if (t.status === 'in_progress') {
+    return `<div class="task-live-row idle">In Progress · Not currently active</div>`;
+  }
+  return '';
+}
+
+function taskActionButtonsHtml(t) {
+  if (t.status === 'completed' || t.status === 'cancelled') return '';
+  if (!(t.assignee_ids || []).includes(currentUser)) return '';
+  const mine = myActiveSession();
+  const isMine = mine && mine.task_id === t.id;
+  let btns;
+  if (isMine) {
+    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickPauseTask('${t.id}')">Pause</button>
+            <button type="button" class="btn-secondary" onclick="event.stopPropagation();quickCompleteTask('${t.id}')">Complete</button>`;
+  } else if (t.status === 'not_started') {
+    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickStartTask('${t.id}')">Start Work</button>`;
+  } else if (t.status === 'in_progress') {
+    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickStartTask('${t.id}')">Resume</button>`;
+  } else if (t.status === 'waiting') {
+    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickStartTask('${t.id}')">Resume Work</button>`;
+  } else {
+    return '';
+  }
+  return `<div class="task-card-actions" onclick="event.stopPropagation()">${btns}</div>`;
 }
 
 function renderTasksView() {
   const container = document.getElementById('taskListContainer');
   if (!container) return; // not yet in DOM (shouldn't happen, but stay safe on early renderAll() calls)
+
+  if (taskViewMode === 'live') {
+    renderLiveTeamView(container);
+    return;
+  }
+
   buildTaskFilterDropdowns();
+  if (taskViewMode === 'my') renderDailySummary();
   const showCompleted = document.getElementById('tf-show-completed')?.checked;
 
   let list = tasks;
@@ -3399,6 +3739,165 @@ function renderTaskDashWidget() {
   document.getElementById('taskDashOpen').textContent = mine.length;
   document.getElementById('taskDashToday').textContent = mine.filter(t => t.due_date === today).length;
   document.getElementById('taskDashOverdue').textContent = mine.filter(t => t.is_overdue).length;
+}
+
+// ── LIVE WORKING / TASK TIME TRACKING (V1.3) ────────────────────
+// task_work_sessions (server-side) is the sole source of truth for actual
+// time; nothing here ever writes elapsed seconds — every ticking display
+// is `now - started_at`, computed client-side each second and reconciled
+// against the server on every ~5s poll. This is task-work tracking only,
+// not attendance: wording always says "No active tracked task", never
+// "Idle".
+function myActiveSession() {
+  return liveWork.find(s => s.staff_id === currentUser) || null;
+}
+function formatDurationSeconds(seconds) {
+  if (seconds === null || seconds === undefined) return '—';
+  if (seconds < 60) return Math.round(seconds) + ' sec';
+  const totalMin = Math.round(seconds / 60);
+  if (totalMin < 60) return totalMin + ' min';
+  const hrs = Math.floor(totalMin / 60);
+  const rem = totalMin % 60;
+  return `${hrs} hr ${String(rem).padStart(2, '0')} min`;
+}
+function formatHHMMSS(seconds) {
+  seconds = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return [h, m, s].map(n => String(n).padStart(2, '0')).join(':');
+}
+
+// ── Active Work Bar (persists across every view — see its HTML's own
+// comment for why) ──
+function renderActiveWorkBar() {
+  const bar = document.getElementById('activeWorkBar');
+  if (!bar) return;
+  const mine = myActiveSession();
+  if (!mine || !mine.task) { bar.hidden = true; stopAwbTimer(); return; }
+  bar.hidden = false;
+  const job = mine.task.job_id ? jobs.find(j => j.id === mine.task.job_id) : null;
+  document.getElementById('awb-title').textContent = mine.task.title + (job ? ` — ${job.id} ${job.title}` : '');
+  startAwbTimer(mine.started_at);
+}
+function startAwbTimer(startedAt) {
+  stopAwbTimer();
+  const tick = () => {
+    const el = document.getElementById('awb-timer');
+    if (el) el.textContent = formatHHMMSS((Date.now() - startedAt) / 1000);
+  };
+  tick();
+  awbTimerInterval = setInterval(tick, 1000);
+}
+function stopAwbTimer() {
+  if (awbTimerInterval) { clearInterval(awbTimerInterval); awbTimerInterval = null; }
+}
+// One persistent 1s ticker (started once at login) rather than restarting
+// an interval on every render — it just re-queries whichever
+// .task-live-timer badges are currently in the DOM (My Tasks/All Tasks
+// task cards showing the CURRENT user's own "WORKING NOW" badge; other
+// staff's badges and Live Team intentionally refresh only on the ~5s poll
+// to keep this compact, per spec).
+function startTaskCardTimers() {
+  stopTaskCardTimers();
+  taskCardTimerInterval = setInterval(() => {
+    document.querySelectorAll('.task-live-timer[data-started]').forEach(el => {
+      el.textContent = formatHHMMSS((Date.now() - Number(el.dataset.started)) / 1000);
+    });
+  }, 1000);
+}
+function stopTaskCardTimers() {
+  if (taskCardTimerInterval) { clearInterval(taskCardTimerInterval); taskCardTimerInterval = null; }
+}
+function pauseCurrentWork() {
+  const mine = myActiveSession();
+  if (mine) quickPauseTask(mine.task_id);
+}
+function openCurrentWorkTask() {
+  const mine = myActiveSession();
+  if (mine) openTaskDetail(mine.task_id);
+}
+
+// ── Quick work actions (task cards, Active Work Bar, Task Detail) ──
+async function quickStartTask(taskId) {
+  const mine = myActiveSession();
+  if (mine && mine.task_id !== taskId) {
+    const otherTitle = mine.task ? mine.task.title : 'another task';
+    if (!confirm(`You are currently working on "${otherTitle}". Starting this task will pause it automatically. Continue?`)) return;
+  }
+  try {
+    await apiPost('/api/tasks/' + encodeURIComponent(taskId) + '/start', {});
+    fetchAll();
+  } catch(e) {
+    alert('Error starting work: ' + e.message);
+  }
+}
+async function quickPauseTask(taskId) {
+  try {
+    await apiPost('/api/tasks/' + encodeURIComponent(taskId) + '/pause', {});
+    fetchAll();
+  } catch(e) {
+    alert('Error pausing work: ' + e.message);
+  }
+}
+async function quickCompleteTask(taskId) {
+  try {
+    await apiPut('/api/tasks/' + encodeURIComponent(taskId), { status: 'completed' });
+    closeTaskDetail();
+    fetchAll();
+  } catch(e) {
+    alert('Error completing task: ' + e.message);
+  }
+}
+
+// ── Live Team ──
+function renderLiveTeamView(container) {
+  if (liveWork.length === 0) {
+    container.innerHTML = '<div class="task-empty">No one has an active tracked task right now.</div>';
+    return;
+  }
+  const rows = [...liveWork].sort((a, b) => a.started_at - b.started_at).map(s => {
+    const staff = teamMember(s.staff_id);
+    const t = s.task;
+    const job = t && t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+    const elapsedSeconds = (Date.now() - s.started_at) / 1000;
+    const startedLabel = new Date(s.started_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const longRunning = elapsedSeconds > 8 * 3600;
+    return `
+      <div class="live-team-row" onclick="${t ? `openTaskDetail('${t.id}')` : ''}">
+        <div class="live-team-staff">
+          ${staff ? `<div class="avatar" style="background:${staff.color}">${staff.initials}</div>` : ''}
+          <div>
+            <div style="font-weight:600;font-size:12.5px">${esc(staff ? staff.name : s.staff_id)}</div>
+            <div style="font-size:10.5px;color:var(--text-faint)">${esc(staff ? staff.role : '')}</div>
+          </div>
+        </div>
+        <div class="live-team-task">
+          <div style="font-weight:500">${t ? esc(t.title) : '(task not found)'}</div>
+          <div style="color:var(--text-faint)">${job ? `${job.id} · ${esc(job.title)}` : (t && t.job_id ? '' : 'General Office Task')}${t ? ' · ' + esc(taskTypeLabel(t.task_type)) : ''}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="live-team-timer">${formatHHMMSS(elapsedSeconds)}</div>
+          <div style="font-size:10.5px;color:var(--text-faint)">Started ${startedLabel}${t && t.expected_minutes ? ` · Expected ${formatTaskDuration(t.expected_minutes)}` : ''}</div>
+          ${longRunning ? '<div class="live-team-long">Long-running session</div>' : ''}
+        </div>
+      </div>`;
+  }).join('');
+  container.innerHTML = `<div class="live-team-list">${rows}</div>`;
+}
+
+// ── Daily Work Summary (My Tasks header) ──
+function renderDailySummary() {
+  const bar = document.getElementById('dailySummaryBar');
+  if (!bar || !currentUser) return;
+  const today = todayIST();
+  const mine = workSessions.filter(s => s.staff_id === currentUser && new Date(s.started_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === today);
+  const totalSeconds = mine.reduce((sum, s) => sum + (s.ended_at ? s.duration_seconds : (Date.now() - s.started_at) / 1000), 0);
+  const taskIds = new Set(mine.map(s => s.task_id));
+  bar.innerHTML = `
+    <div><strong>${formatDurationSeconds(totalSeconds)}</strong>Today Tracked</div>
+    <div><strong>${mine.length}</strong>Sessions</div>
+    <div><strong>${taskIds.size}</strong>Tasks Worked</div>`;
 }
 
 // Jumps from a job's "View All Tasks" link into the Tasks page, All Tasks
