@@ -1112,6 +1112,365 @@ async function closeJob(db, jobId, body, user) {
   return rowToJob(updated);
 }
 
+// ── TASKS (V1.2) ───────────────────────────────────────────────────
+// Normalized, independent of jobs/job_billing/milestone fields — the jobs
+// table stays frozen at 97 columns (see HANDOFF_NOTES.md). A task may
+// optionally link to a job (job_id nullable) or stand alone as a general
+// office task. Task completion never touches claim milestones and claim
+// milestones never touch tasks — the two systems are deliberately
+// independent in V1.2.
+//
+// Authoritative TFAM Task Type Master (machine value -> display label).
+const TASK_TYPES = [
+  ['job_folder_creation', 'Job Creation / Folder Creation'],
+  ['contact_fix_appointment', 'Contact Insured & Fix Appointment'],
+  ['prepare_ila_lor_format', 'Prepare ILA & LOR Format'],
+  ['physical_inspection', 'Physical Inspection'],
+  ['upload_field_material', 'Upload Field Notes, Documents & Photographs'],
+  ['prepare_ila', 'Prepare ILA'],
+  ['prepare_lor', 'Prepare LOR'],
+  ['issue_reminder', 'Issue Reminder'],
+  ['verify_documents', 'Verify Documents'],
+  ['scan_physical_documents', 'Scan Physical Documents'],
+  ['assessment_preparation', 'Assessment Preparation'],
+  ['call_pending_documents', 'Call for Pending Documents'],
+  ['assessment_director_approval', 'Assessment – Director Approval'],
+  ['insurer_approval', 'Insurer Approval'],
+  ['insured_approval', 'Insured Approval / Consent'],
+  ['fsr_format_preparation', 'FSR Format Preparation'],
+  ['fsr_preparation', 'FSR Preparation'],
+  ['fsr_review', 'FSR Review'],
+  ['fsr_print_mail', 'FSR Print & Mail'],
+  ['report_dispatch', 'Report Dispatch'],
+  ['courier_tracking', 'Courier Tracking'],
+  ['entry_updation', 'Entry Updation After Completion'],
+  ['bill_entry', 'Bill Entry'],
+  ['other', 'Other'],
+];
+const TASK_TYPE_VALUES = TASK_TYPES.map(t => t[0]);
+const TASK_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
+const TASK_STATUSES = ['not_started', 'in_progress', 'waiting', 'completed', 'cancelled'];
+const TASK_STATUS_LABELS = {
+  not_started: 'Not Started', in_progress: 'In Progress', waiting: 'Waiting',
+  completed: 'Completed', cancelled: 'Cancelled',
+};
+
+function taskTypeLabel(v) { const m = TASK_TYPES.find(t => t[0] === v); return m ? m[1] : v; }
+function taskStatusLabel(v) { return TASK_STATUS_LABELS[v] || v; }
+function capitalize(v) { return v ? String(v).charAt(0).toUpperCase() + String(v).slice(1) : v; }
+
+function isValidHHMM(v) {
+  if (!v) return true; // optional
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+}
+
+// India/office-local "today" and "now" — Workers run in UTC, so every
+// Overdue/Today/Upcoming classification shifts the epoch by the fixed
+// IST offset (+5:30) before reading the date/time parts. Good enough for
+// a single-office, single-timezone firm; no real per-user timezone need.
+function todayIST() {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+function nowISTTimeHHMM() {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(11, 16);
+}
+// Overdue only once due_date's local calendar day has fully ended (or, for
+// a date+time due task, once that specific time has passed today) — a
+// date-only task due "today" is never overdue while it's still today.
+function computeTaskOverdue(task) {
+  if (task.status === 'completed' || task.status === 'cancelled') return false;
+  if (!task.due_date) return false;
+  const today = todayIST();
+  if (task.due_date < today) return true;
+  if (task.due_date > today) return false;
+  if (!task.due_time) return false;
+  return nowISTTimeHHMM() > task.due_time;
+}
+
+async function staffNames(db, ids) {
+  if (!ids || ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const { results } = await db.prepare(`SELECT id, name FROM staff WHERE id IN (${placeholders})`).bind(...ids).all();
+  const byId = {};
+  for (const r of results) byId[r.id] = r.name;
+  return ids.map(i => byId[i] || i);
+}
+
+async function appendTaskActivity(db, taskId, entries) {
+  for (const e of entries) {
+    const id = `TA-${e.ts.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    await db.prepare('INSERT INTO task_activity (id, task_id, text, ts, actor) VALUES (?,?,?,?,?)')
+      .bind(id, taskId, e.text, e.ts, e.actor).run();
+  }
+}
+
+async function getTaskWithDetails(db, id) {
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
+  if (!task) return null;
+  const { results: assignees } = await db.prepare('SELECT staff_id FROM task_assignees WHERE task_id = ?').bind(id).all();
+  const { results: activity } = await db.prepare('SELECT text, ts, actor FROM task_activity WHERE task_id = ? ORDER BY ts ASC').bind(id).all();
+  let blockerStatus = null;
+  if (task.blocked_by_task_id) {
+    const blocker = await db.prepare('SELECT status FROM tasks WHERE id = ?').bind(task.blocked_by_task_id).first();
+    blockerStatus = blocker ? blocker.status : null;
+  }
+  return {
+    ...task,
+    assignee_ids: assignees.map(a => a.staff_id),
+    activity,
+    is_overdue: computeTaskOverdue(task),
+    is_blocked: !!task.blocked_by_task_id && blockerStatus !== 'completed',
+  };
+}
+
+async function listTasks(db) {
+  const { results } = await db.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all();
+  const { results: assigneeRows } = await db.prepare('SELECT task_id, staff_id FROM task_assignees').all();
+  const assigneesByTask = {};
+  for (const r of assigneeRows) (assigneesByTask[r.task_id] ||= []).push(r.staff_id);
+  const statusById = {};
+  for (const t of results) statusById[t.id] = t.status;
+  return results.map(t => ({
+    ...t,
+    assignee_ids: assigneesByTask[t.id] || [],
+    is_overdue: computeTaskOverdue(t),
+    is_blocked: !!t.blocked_by_task_id && statusById[t.blocked_by_task_id] !== 'completed',
+  }));
+}
+
+// Shared validation for fields common to create and update. Returns the
+// normalized values; throws on the first invalid field.
+function validateTaskFields({ title, taskType, priority, status, dueDate, dueTime, expectedMinutesRaw }) {
+  if (title !== undefined && !String(title).trim()) throw new Error('Task Title is required');
+  if (taskType !== undefined && !TASK_TYPE_VALUES.includes(taskType)) throw new Error('Invalid task type');
+  if (priority !== undefined && !TASK_PRIORITIES.includes(priority)) throw new Error('Priority must be Low, Normal, High, or Urgent');
+  if (status !== undefined && !TASK_STATUSES.includes(status)) throw new Error('Invalid task status');
+  if (dueDate && !EVENT_DATE_RE.test(dueDate)) throw new Error('Due Date must be a valid date (YYYY-MM-DD)');
+  if (dueTime && !isValidHHMM(dueTime)) throw new Error('Due Time must be a valid time (HH:MM)');
+  let expectedMinutes;
+  if (expectedMinutesRaw === undefined || expectedMinutesRaw === null || expectedMinutesRaw === '') {
+    expectedMinutes = null;
+  } else {
+    const n = Number(expectedMinutesRaw);
+    if (!Number.isInteger(n) || n <= 0) throw new Error('Expected Duration must be a positive whole number of minutes');
+    expectedMinutes = n;
+  }
+  return { expectedMinutes };
+}
+
+async function createTask(db, body, user) {
+  const title = (body.title || '').trim();
+  const taskType = body.task_type;
+  const priority = body.priority || 'normal';
+  const status = body.status || 'not_started';
+  const dueDate = (body.due_date || '').trim();
+  const dueTime = (body.due_time || '').trim();
+  const { expectedMinutes } = validateTaskFields({
+    title, taskType, priority, status, dueDate, dueTime, expectedMinutesRaw: body.expected_minutes,
+  });
+
+  const description = (body.description || '').trim();
+
+  let waitingReason = '';
+  if (status === 'waiting') {
+    waitingReason = (body.waiting_reason || '').trim();
+    if (!waitingReason) throw new Error('Waiting Reason is required when Status is Waiting');
+  }
+
+  let jobId = null;
+  if (body.job_id) {
+    jobId = String(body.job_id).trim();
+    const job = await db.prepare('SELECT 1 FROM jobs WHERE id = ?').bind(jobId).first();
+    if (!job) throw new Error('Linked job not found');
+  }
+
+  let blockedBy = null;
+  if (body.blocked_by_task_id) {
+    blockedBy = String(body.blocked_by_task_id).trim();
+    const blocker = await db.prepare('SELECT 1 FROM tasks WHERE id = ?').bind(blockedBy).first();
+    if (!blocker) throw new Error('Blocked-by task not found');
+  }
+
+  const assigneeIds = Array.isArray(body.assignee_ids) ? [...new Set(body.assignee_ids.filter(Boolean))] : [];
+  if (assigneeIds.length === 0) throw new Error('At least one assignee is required');
+  await validateIdsExist(db, 'staff', assigneeIds, 'staff id (assignee)');
+
+  const now = Date.now();
+  const id = `TK-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+  await db.prepare(`
+    INSERT INTO tasks (id, job_id, title, description, task_type, priority, due_date, due_time,
+      expected_minutes, status, waiting_reason, blocked_by_task_id, assigned_by, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, title, description, taskType, priority, dueDate, dueTime,
+    expectedMinutes, status, waitingReason, blockedBy, user.id, user.id, now, now).run();
+
+  for (const staffId of assigneeIds) {
+    await db.prepare('INSERT INTO task_assignees (task_id, staff_id, assigned_at, assigned_by) VALUES (?,?,?,?)')
+      .bind(id, staffId, now, user.id).run();
+  }
+
+  const assigneeNames = await staffNames(db, assigneeIds);
+  const entries = [{ text: `Task created — ${title} — Assigned to ${assigneeNames.join(', ')}.`, ts: now, actor: user.id }];
+  if (jobId) entries.push({ text: `Task linked to Job ${jobId}.`, ts: now, actor: user.id });
+  if (status === 'waiting') entries.push({ text: `Task moved to Waiting — ${waitingReason}.`, ts: now, actor: user.id });
+  await appendTaskActivity(db, id, entries);
+
+  return getTaskWithDetails(db, id);
+}
+
+async function updateTask(db, id, body, user) {
+  const existing = await db.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
+  if (!existing) throw new Error('task not found');
+
+  const dueDateEff = body.due_date !== undefined ? String(body.due_date).trim() : existing.due_date;
+  const dueTimeEff = body.due_time !== undefined ? String(body.due_time).trim() : existing.due_time;
+  const { expectedMinutes } = validateTaskFields({
+    title: body.title !== undefined ? body.title : undefined,
+    taskType: body.task_type !== undefined ? body.task_type : undefined,
+    priority: body.priority !== undefined ? body.priority : undefined,
+    status: body.status !== undefined ? body.status : undefined,
+    dueDate: body.due_date !== undefined ? dueDateEff : '',
+    dueTime: body.due_time !== undefined ? dueTimeEff : '',
+    expectedMinutesRaw: body.expected_minutes !== undefined ? body.expected_minutes : (existing.expected_minutes ?? undefined),
+  });
+
+  const nextStatus = body.status !== undefined ? body.status : existing.status;
+  let waitingReason = body.waiting_reason !== undefined ? String(body.waiting_reason).trim() : existing.waiting_reason;
+  if (nextStatus === 'waiting' && !waitingReason) {
+    throw new Error('Waiting Reason is required when Status is Waiting');
+  }
+
+  let jobId = existing.job_id;
+  if (body.job_id !== undefined) {
+    jobId = body.job_id ? String(body.job_id).trim() : null;
+    if (jobId) {
+      const job = await db.prepare('SELECT 1 FROM jobs WHERE id = ?').bind(jobId).first();
+      if (!job) throw new Error('Linked job not found');
+    }
+  }
+
+  let blockedBy = existing.blocked_by_task_id;
+  if (body.blocked_by_task_id !== undefined) {
+    blockedBy = body.blocked_by_task_id ? String(body.blocked_by_task_id).trim() : null;
+    if (blockedBy) {
+      if (blockedBy === id) throw new Error('A task cannot be blocked by itself');
+      const blocker = await db.prepare('SELECT 1 FROM tasks WHERE id = ?').bind(blockedBy).first();
+      if (!blocker) throw new Error('Blocked-by task not found');
+    }
+  }
+
+  let assigneeIds = null;
+  if (body.assignee_ids !== undefined) {
+    assigneeIds = Array.isArray(body.assignee_ids) ? [...new Set(body.assignee_ids.filter(Boolean))] : [];
+    if (assigneeIds.length === 0) throw new Error('At least one assignee is required');
+    await validateIdsExist(db, 'staff', assigneeIds, 'staff id (assignee)');
+  }
+
+  const now = Date.now();
+  const who = user.id;
+  const actEntries = [];
+
+  if (body.title !== undefined && body.title.trim() !== existing.title) {
+    actEntries.push({ text: `Task title changed from "${existing.title}" to "${body.title.trim()}".`, ts: now, actor: who });
+  }
+  if (body.description !== undefined && body.description.trim() !== (existing.description || '')) {
+    actEntries.push({ text: 'Task description updated.', ts: now, actor: who });
+  }
+  if (body.task_type !== undefined && body.task_type !== existing.task_type) {
+    actEntries.push({ text: `Task type changed from ${taskTypeLabel(existing.task_type)} to ${taskTypeLabel(body.task_type)}.`, ts: now, actor: who });
+  }
+  if (body.priority !== undefined && body.priority !== existing.priority) {
+    actEntries.push({ text: `Task priority changed from ${capitalize(existing.priority)} to ${capitalize(body.priority)}.`, ts: now, actor: who });
+  }
+  if (body.due_date !== undefined && dueDateEff !== existing.due_date) {
+    actEntries.push({ text: `Task due date changed from ${existing.due_date || '—'} to ${dueDateEff || '—'}.`, ts: now, actor: who });
+  }
+  if (body.due_time !== undefined && dueTimeEff !== existing.due_time) {
+    actEntries.push({ text: `Task due time changed from ${existing.due_time || '—'} to ${dueTimeEff || '—'}.`, ts: now, actor: who });
+  }
+  if (body.expected_minutes !== undefined && expectedMinutes !== existing.expected_minutes) {
+    actEntries.push({ text: `Expected duration changed from ${existing.expected_minutes || '—'} to ${expectedMinutes || '—'} minutes.`, ts: now, actor: who });
+  }
+  if (body.job_id !== undefined && jobId !== existing.job_id) {
+    actEntries.push({ text: jobId ? `Task linked to Job ${jobId}.` : `Task unlinked from Job ${existing.job_id}.`, ts: now, actor: who });
+  }
+  if (body.blocked_by_task_id !== undefined && blockedBy !== existing.blocked_by_task_id) {
+    actEntries.push({ text: blockedBy ? `Task marked as blocked by ${blockedBy}.` : 'Blocked-by dependency removed.', ts: now, actor: who });
+  }
+
+  // Completion/reopen/cancellation bookkeeping is always server-derived —
+  // completed_at/completed_by/cancelled_at/cancelled_by are never trusted
+  // from the client, only ever set here from the authenticated session.
+  let completedAt = existing.completed_at;
+  let completedBy = existing.completed_by;
+  let cancelledAt = existing.cancelled_at;
+  let cancelledBy = existing.cancelled_by;
+
+  if (body.status !== undefined && body.status !== existing.status) {
+    const oldStatus = existing.status;
+    const wasCompleted = oldStatus === 'completed';
+    const wasCancelled = oldStatus === 'cancelled';
+
+    if (nextStatus === 'completed') {
+      completedAt = now; completedBy = user.id;
+      actEntries.push({ text: `Task completed by ${user.id}.`, ts: now, actor: who });
+    } else if (nextStatus === 'cancelled') {
+      cancelledAt = now; cancelledBy = user.id;
+      actEntries.push({ text: 'Task cancelled.', ts: now, actor: who });
+    } else if (nextStatus === 'waiting') {
+      actEntries.push({ text: `Task moved to Waiting — ${waitingReason}.`, ts: now, actor: who });
+    } else if (wasCompleted) {
+      actEntries.push({ text: `Task reopened by ${user.id}.`, ts: now, actor: who });
+    } else {
+      actEntries.push({ text: `Task status changed from ${taskStatusLabel(oldStatus)} to ${taskStatusLabel(nextStatus)}.`, ts: now, actor: who });
+    }
+
+    if (wasCompleted && nextStatus !== 'completed') { completedAt = null; completedBy = ''; }
+    if (wasCancelled && nextStatus !== 'cancelled') { cancelledAt = null; cancelledBy = ''; }
+  } else if (nextStatus === 'waiting' && body.waiting_reason !== undefined && waitingReason !== existing.waiting_reason) {
+    actEntries.push({ text: `Waiting reason updated to ${waitingReason}.`, ts: now, actor: who });
+  }
+
+  const completionNote = body.completion_note !== undefined ? String(body.completion_note).trim() : existing.completion_note;
+
+  await db.prepare(`
+    UPDATE tasks SET
+      title = ?, description = ?, task_type = ?, priority = ?, due_date = ?, due_time = ?,
+      expected_minutes = ?, status = ?, waiting_reason = ?, blocked_by_task_id = ?, job_id = ?,
+      completion_note = ?, completed_at = ?, completed_by = ?, cancelled_at = ?, cancelled_by = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).bind(
+    body.title !== undefined ? body.title.trim() : existing.title,
+    body.description !== undefined ? body.description.trim() : (existing.description || ''),
+    body.task_type !== undefined ? body.task_type : existing.task_type,
+    body.priority !== undefined ? body.priority : existing.priority,
+    dueDateEff, dueTimeEff, expectedMinutes, nextStatus, waitingReason, blockedBy, jobId,
+    completionNote, completedAt, completedBy, cancelledAt, cancelledBy, now, id,
+  ).run();
+
+  if (assigneeIds !== null) {
+    const { results: currentRows } = await db.prepare('SELECT staff_id FROM task_assignees WHERE task_id = ?').bind(id).all();
+    const currentAssignees = currentRows.map(r => r.staff_id);
+    const changed = assigneeIds.length !== currentAssignees.length
+      || assigneeIds.some(a => !currentAssignees.includes(a));
+    if (changed) {
+      await db.prepare('DELETE FROM task_assignees WHERE task_id = ?').bind(id).run();
+      for (const staffId of assigneeIds) {
+        await db.prepare('INSERT INTO task_assignees (task_id, staff_id, assigned_at, assigned_by) VALUES (?,?,?,?)')
+          .bind(id, staffId, now, user.id).run();
+      }
+      const names = await staffNames(db, assigneeIds);
+      actEntries.push({ text: `Task assigned to ${names.join(', ')}.`, ts: now, actor: who });
+    }
+  }
+
+  if (actEntries.length > 0) await appendTaskActivity(db, id, actEntries);
+
+  return getTaskWithDetails(db, id);
+}
+
 async function getSetting(db, key) {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first();
   return row ? row.value : null;
@@ -1616,6 +1975,31 @@ export default {
         const id = decodeURIComponent(pathname.slice('/api/jobs/'.length));
         const body = await request.json();
         return json(await updateJob(db, id, body, user));
+      }
+
+      if (pathname === '/api/tasks' && request.method === 'GET') {
+        return json(await listTasks(db));
+      }
+
+      if (pathname === '/api/tasks' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await createTask(db, body, user), 201);
+      }
+
+      {
+        const taskItemMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
+        if (taskItemMatch) {
+          const id = decodeURIComponent(taskItemMatch[1]);
+          if (request.method === 'GET') {
+            const task = await getTaskWithDetails(db, id);
+            if (!task) return error('task not found', 404);
+            return json(task);
+          }
+          if (request.method === 'PUT') {
+            const body = await request.json();
+            return json(await updateTask(db, id, body, user));
+          }
+        }
       }
 
       if (pathname === '/api/log' && request.method === 'GET') {

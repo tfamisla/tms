@@ -302,3 +302,65 @@ CREATE TABLE IF NOT EXISTS fee_receipts (
   FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_fee_receipts_job ON fee_receipts (job_id);
+
+-- ── Tasks (V1.2) ─────────────────────────────────────────────
+-- Normalized, independent of jobs — the jobs table is frozen at 97
+-- columns (see HANDOFF_NOTES.md). `job_id` is nullable: NULL means a
+-- standalone office task, non-NULL means a claim-linked task. Task
+-- completion never touches claim milestone fields and claim milestones
+-- never touch tasks — the two systems stay independent in V1.2.
+CREATE TABLE IF NOT EXISTS tasks (
+  id                  TEXT    PRIMARY KEY,
+  job_id              TEXT    DEFAULT NULL,   -- nullable: NULL = standalone office task
+  title               TEXT    NOT NULL,
+  description         TEXT    DEFAULT '',
+  task_type           TEXT    NOT NULL,        -- see TASK_TYPES in worker.js — the TFAM Task Type Master
+  priority            TEXT    NOT NULL DEFAULT 'normal',    -- 'low'|'normal'|'high'|'urgent'
+  due_date            TEXT    DEFAULT '',      -- optional, YYYY-MM-DD
+  due_time            TEXT    DEFAULT '',      -- optional, HH:MM
+  expected_minutes    INTEGER,                 -- optional, positive integer minutes
+  status              TEXT    NOT NULL DEFAULT 'not_started',  -- 'not_started'|'in_progress'|'waiting'|'completed'|'cancelled'
+  waiting_reason      TEXT    DEFAULT '',      -- required (enforced in worker.js) when status='waiting'
+  blocked_by_task_id  TEXT    DEFAULT NULL,    -- optional simple dependency; display-only, never forces status
+  assigned_by         TEXT    DEFAULT '',      -- staff id, derived server-side from the authenticated user
+  created_by          TEXT    DEFAULT '',      -- staff id, derived server-side from the authenticated user
+  created_at          INTEGER NOT NULL,
+  updated_at          INTEGER NOT NULL,
+  completed_at        INTEGER,                 -- only ever set/cleared server-side
+  completed_by        TEXT    DEFAULT '',      -- only ever set/cleared server-side
+  completion_note     TEXT    DEFAULT '',
+  cancelled_at        INTEGER,                 -- only ever set/cleared server-side
+  cancelled_by        TEXT    DEFAULT '',      -- only ever set/cleared server-side
+  FOREIGN KEY (job_id) REFERENCES jobs(id),
+  FOREIGN KEY (blocked_by_task_id) REFERENCES tasks(id)
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_job       ON tasks (job_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks (status);
+CREATE INDEX IF NOT EXISTS idx_tasks_due_date  ON tasks (due_date);
+CREATE INDEX IF NOT EXISTS idx_tasks_priority  ON tasks (priority);
+CREATE INDEX IF NOT EXISTS idx_tasks_task_type ON tasks (task_type);
+
+-- One task -> one or many assignees. Never comma-separated staff IDs.
+CREATE TABLE IF NOT EXISTS task_assignees (
+  task_id     TEXT    NOT NULL,
+  staff_id    TEXT    NOT NULL,
+  assigned_at INTEGER NOT NULL,
+  assigned_by TEXT    DEFAULT '',   -- staff id, derived server-side from the authenticated user
+  PRIMARY KEY (task_id, staff_id),  -- doubles as UNIQUE(task_id, staff_id); (task_id, staff_id) already
+                                     -- indexes lookups by task_id, so only staff_id needs its own index
+  FOREIGN KEY (task_id) REFERENCES tasks(id),
+  FOREIGN KEY (staff_id) REFERENCES staff(id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_assignees_staff ON task_assignees (staff_id);
+
+-- Task audit history — a dedicated table rather than reusing jobs.activity,
+-- since standalone tasks have no job_id to attach a job-scoped log entry to.
+CREATE TABLE IF NOT EXISTS task_activity (
+  id      TEXT    PRIMARY KEY,
+  task_id TEXT    NOT NULL,
+  text    TEXT    NOT NULL,
+  ts      INTEGER NOT NULL,
+  actor   TEXT    DEFAULT '',
+  FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_activity_task ON task_activity (task_id);

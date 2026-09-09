@@ -211,6 +211,39 @@ details.sp-section[open] summary{margin-bottom:0}
 .config-banner strong{color:var(--amber)}
 .config-banner[hidden]{display:none!important}
 
+/* ── TASKS (V1.2) ── */
+.tasks-wrap{flex:1;overflow:auto;padding:16px}
+.task-mode-toggle{display:flex;gap:4px;background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px}
+.task-mode-btn{background:none;border:none;font-family:inherit;font-size:12.5px;font-weight:500;color:var(--text-sec);padding:6px 14px;border-radius:var(--radius-sm);cursor:pointer}
+.task-mode-btn.active{background:var(--surface);color:var(--text-pri);box-shadow:var(--shadow-sm)}
+.task-group-hdr{font-family:'DM Mono',monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);margin:18px 0 8px;display:flex;align-items:center;gap:8px}
+.task-group-hdr:first-child{margin-top:0}
+.task-group-count{background:var(--ground);border-radius:100px;padding:1px 8px;font-family:inherit;letter-spacing:0}
+.task-list{display:flex;flex-direction:column;gap:6px}
+.task-card{background:var(--ground);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.task-card:hover{border-color:var(--amber);box-shadow:var(--shadow-sm)}
+.task-card.overdue{border-left:3px solid var(--red)}
+.task-card-top{display:flex;justify-content:space-between;gap:10px;align-items:start}
+.task-card-title{font-size:13px;font-weight:600;color:var(--text-pri)}
+.task-card-meta{font-size:11.5px;color:var(--text-sec);margin-top:3px}
+.task-card-bottom{display:flex;align-items:center;gap:8px;margin-top:7px;flex-wrap:wrap}
+.task-priority{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:100px}
+.task-priority.low{background:var(--ground);color:var(--text-faint);border:1px solid var(--border)}
+.task-priority.normal{background:var(--blue-bg);color:var(--blue)}
+.task-priority.high{background:var(--amber-bg);color:var(--amber)}
+.task-priority.urgent{background:var(--red-bg);color:var(--red)}
+.task-status-badge{font-size:9.5px;font-weight:600;padding:2px 7px;border-radius:100px;background:var(--surface);border:1px solid var(--border);color:var(--text-sec)}
+.task-blocked-badge{font-size:9.5px;font-weight:600;padding:2px 7px;border-radius:100px;background:var(--red-bg);color:var(--red)}
+.task-avatars{display:flex;gap:3px;margin-left:auto}
+.task-filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.task-search{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-pri);font-family:inherit;font-size:12.5px;padding:6px 10px;min-width:180px}
+.task-empty{text-align:center;padding:24px 12px;font-size:12.5px;color:var(--text-faint)}
+.task-dash-widget{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;cursor:pointer}
+.task-dash-widget:hover{border-color:var(--amber)}
+.task-dash-stat{display:flex;flex-direction:column}
+.task-dash-num{font-size:20px;font-weight:700;color:var(--text-pri)}
+.task-dash-lbl{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -252,6 +285,7 @@ details.sp-section[open] summary{margin-bottom:0}
   <span class="topbar-brand">TFAM · TMS</span>
   <div class="topbar-nav">
     <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
+    <button class="nav-btn" data-view="tasks" onclick="switchView('tasks')">📋 Tasks</button>
     <button class="nav-btn" data-view="staff" onclick="switchView('staff')">🛠 Admin</button>
     <button class="nav-btn" data-view="log" onclick="switchView('log')">📜 Work Log</button>
   </div>
@@ -259,6 +293,7 @@ details.sp-section[open] summary{margin-bottom:0}
     <span class="live-dot" id="liveDot" title="Live sync"></span>
     <span class="topbar-user" id="topbarUser"></span>
     <button class="btn-logout" onclick="logout()">Log out</button>
+    <button class="btn-secondary" onclick="openTaskForm()">+ Add Task</button>
     <button class="btn-new" onclick="openNewJob()">+ New Job</button>
   </div>
 </div>
@@ -269,7 +304,52 @@ details.sp-section[open] summary{margin-bottom:0}
 <!-- ── DASHBOARD VIEW ── -->
 <div class="view active" id="view-dashboard">
   <div class="kanban-wrap">
+    <div class="task-dash-widget" id="taskDashWidget" onclick="switchView('tasks')">
+      <div class="task-dash-stat"><span class="task-dash-num" id="taskDashOpen">0</span><span class="task-dash-lbl">My Open Tasks</span></div>
+      <div class="task-dash-stat"><span class="task-dash-num" id="taskDashToday">0</span><span class="task-dash-lbl">Due Today</span></div>
+      <div class="task-dash-stat"><span class="task-dash-num" id="taskDashOverdue">0</span><span class="task-dash-lbl" style="color:var(--red)">Overdue</span></div>
+    </div>
     <div class="kanban" id="kanban"></div>
+  </div>
+</div>
+
+<!-- ── TASKS VIEW (V1.2) ── -->
+<div class="view" id="view-tasks">
+  <div class="tasks-wrap">
+    <div class="log-toolbar">
+      <div class="task-mode-toggle">
+        <button class="task-mode-btn active" id="taskModeMyBtn" onclick="setTaskViewMode('my')">My Tasks</button>
+        <button class="task-mode-btn" id="taskModeAllBtn" onclick="setTaskViewMode('all')">All Tasks</button>
+      </div>
+      <button class="btn-new" onclick="openTaskForm()">+ Add Task</button>
+    </div>
+    <div class="task-filters" id="taskFilters" hidden>
+      <select class="log-filter-sel" id="tf-assignee" onchange="renderTasksView()">
+        <option value="">All assignees</option>
+      </select>
+      <select class="log-filter-sel" id="tf-status" onchange="renderTasksView()">
+        <option value="">All statuses</option>
+      </select>
+      <select class="log-filter-sel" id="tf-priority" onchange="renderTasksView()">
+        <option value="">All priorities</option>
+      </select>
+      <select class="log-filter-sel" id="tf-type" onchange="renderTasksView()">
+        <option value="">All task types</option>
+      </select>
+      <select class="log-filter-sel" id="tf-job" onchange="renderTasksView()">
+        <option value="">All jobs</option>
+        <option value="__none__">General office tasks only</option>
+      </select>
+      <select class="log-filter-sel" id="tf-overdue" onchange="renderTasksView()">
+        <option value="">Any due date</option>
+        <option value="overdue">Overdue only</option>
+      </select>
+      <input class="task-search" id="tf-search" placeholder="Search title, job no., insured, claim no." oninput="renderTasksView()">
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-sec);margin-bottom:10px" id="taskShowCompletedWrap">
+      <input type="checkbox" id="tf-show-completed" onchange="renderTasksView()"> Show Completed / Cancelled
+    </label>
+    <div id="taskListContainer"></div>
   </div>
 </div>
 
@@ -1036,6 +1116,200 @@ details.sp-section[open] summary{margin-bottom:0}
   </div>
 </div>
 
+<!-- ── ADD TASK MODAL (V1.2) ── -->
+<div class="modal-overlay" id="taskFormModal" hidden onclick="e=>e.target===this&&closeTaskForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Add Task</h2>
+      <button class="sp-close" onclick="closeTaskForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Task Title *</label>
+          <input id="tfm-title" placeholder="e.g. Prepare assessment for TN-156">
+        </div>
+        <div class="form-field">
+          <label>Task Type *</label>
+          <select id="tfm-type"></select>
+        </div>
+        <div class="form-field">
+          <label>Priority</label>
+          <select id="tfm-priority">
+            <option value="low">Low</option>
+            <option value="normal" selected>Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Linked Job / Claim</label>
+          <select id="tfm-job"></select>
+        </div>
+        <div class="form-field">
+          <label>Due Date</label>
+          <input id="tfm-due-date" type="date">
+        </div>
+        <div class="form-field full">
+          <label>Assigned To *</label>
+          <div class="assigned-grid" id="tfm-assign"></div>
+        </div>
+      </div>
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;font-size:12.5px;color:var(--text-sec);font-weight:600">More Details</summary>
+        <div class="modal-grid" style="margin-top:12px">
+          <div class="form-field full">
+            <label>Description / Instructions</label>
+            <textarea id="tfm-description" class="notes-area" rows="2" placeholder="Optional"></textarea>
+          </div>
+          <div class="form-field">
+            <label>Due Time</label>
+            <input id="tfm-due-time" type="time">
+          </div>
+          <div class="form-field">
+            <label>Expected Duration</label>
+            <select id="tfm-duration-select" onchange="toggleTaskDurationCustom('tfm')">
+              <option value="">— None —</option>
+              <option value="5">5 min</option>
+              <option value="10">10 min</option>
+              <option value="15">15 min</option>
+              <option value="30">30 min</option>
+              <option value="45">45 min</option>
+              <option value="60">1 hr</option>
+              <option value="90">1.5 hr</option>
+              <option value="120">2 hr</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input id="tfm-duration-custom" type="number" min="1" placeholder="Minutes" hidden style="margin-top:6px">
+          </div>
+          <div class="form-field">
+            <label>Blocked By Task</label>
+            <select id="tfm-blocked-by"><option value="">— None —</option></select>
+          </div>
+          <div class="form-field">
+            <label>Status</label>
+            <select id="tfm-status" onchange="toggleTaskWaitingReason('tfm')">
+              <option value="not_started" selected>Not Started</option>
+              <option value="in_progress">In Progress</option>
+              <option value="waiting">Waiting</option>
+            </select>
+          </div>
+          <div class="form-field full" id="tfm-waiting-reason-wrap" hidden>
+            <label>Waiting Reason *</label>
+            <input id="tfm-waiting-reason" placeholder="e.g. Awaiting insured documents">
+          </div>
+        </div>
+      </details>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitTaskForm()">Add Task</button>
+      <button class="btn-secondary" onclick="closeTaskForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TASK DETAIL / EDIT MODAL (V1.2) ── -->
+<div class="modal-overlay" id="taskDetailModal" hidden onclick="e=>e.target===this&&closeTaskDetail()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Task Detail — <span id="td-task-id" class="mono" style="font-size:13px;color:var(--text-faint)"></span></h2>
+      <button class="sp-close" onclick="closeTaskDetail()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="td-quick-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Task Title *</label>
+          <input id="td-title">
+        </div>
+        <div class="form-field">
+          <label>Task Type *</label>
+          <select id="td-type"></select>
+        </div>
+        <div class="form-field">
+          <label>Priority</label>
+          <select id="td-priority">
+            <option value="low">Low</option>
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Linked Job / Claim</label>
+          <select id="td-job"></select>
+        </div>
+        <div class="form-field">
+          <label>Status</label>
+          <select id="td-status" onchange="toggleTaskWaitingReason('td')">
+            <option value="not_started">Not Started</option>
+            <option value="in_progress">In Progress</option>
+            <option value="waiting">Waiting</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div class="form-field full" id="td-waiting-reason-wrap" hidden>
+          <label>Waiting Reason *</label>
+          <input id="td-waiting-reason" placeholder="e.g. Awaiting insured documents">
+        </div>
+        <div class="form-field full">
+          <label>Assigned To *</label>
+          <div class="assigned-grid" id="td-assign"></div>
+        </div>
+        <div class="form-field full">
+          <label>Description / Instructions</label>
+          <textarea id="td-description" class="notes-area" rows="2"></textarea>
+        </div>
+        <div class="form-field">
+          <label>Due Date</label>
+          <input id="td-due-date" type="date">
+        </div>
+        <div class="form-field">
+          <label>Due Time</label>
+          <input id="td-due-time" type="time">
+        </div>
+        <div class="form-field">
+          <label>Expected Duration</label>
+          <select id="td-duration-select" onchange="toggleTaskDurationCustom('td')">
+            <option value="">— None —</option>
+            <option value="5">5 min</option>
+            <option value="10">10 min</option>
+            <option value="15">15 min</option>
+            <option value="30">30 min</option>
+            <option value="45">45 min</option>
+            <option value="60">1 hr</option>
+            <option value="90">1.5 hr</option>
+            <option value="120">2 hr</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <input id="td-duration-custom" type="number" min="1" placeholder="Minutes" hidden style="margin-top:6px">
+        </div>
+        <div class="form-field">
+          <label>Blocked By Task</label>
+          <select id="td-blocked-by"><option value="">— None —</option></select>
+        </div>
+        <div class="form-field full" id="td-completion-note-wrap">
+          <label>Completion Note</label>
+          <input id="td-completion-note" placeholder="Optional">
+        </div>
+      </div>
+      <div class="sp-section" style="margin-top:16px">
+        <div class="sp-section-label">Details</div>
+        <div class="progress-grid" id="td-meta"></div>
+      </div>
+      <div class="sp-section">
+        <div class="sp-section-label">Activity History</div>
+        <div class="activity-feed" id="td-activity"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitTaskDetail()">Save Changes</button>
+      <button class="btn-secondary" onclick="closeTaskDetail()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // CONFIG — set your Worker URL after deploy
@@ -1099,6 +1373,48 @@ let claimFeeReceipts = [];
 let editingFeeReceiptId = null;
 let closingJobId = null;
 let editingVisitId = null;
+let tasks = [];
+let taskViewMode = 'my';   // 'my' | 'all'
+let editingTaskId = null;
+
+// ── TASKS (V1.2) — authoritative TFAM Task Type Master, mirrors worker.js ──
+const TASK_TYPES = [
+  ['job_folder_creation', 'Job Creation / Folder Creation'],
+  ['contact_fix_appointment', 'Contact Insured & Fix Appointment'],
+  ['prepare_ila_lor_format', 'Prepare ILA & LOR Format'],
+  ['physical_inspection', 'Physical Inspection'],
+  ['upload_field_material', 'Upload Field Notes, Documents & Photographs'],
+  ['prepare_ila', 'Prepare ILA'],
+  ['prepare_lor', 'Prepare LOR'],
+  ['issue_reminder', 'Issue Reminder'],
+  ['verify_documents', 'Verify Documents'],
+  ['scan_physical_documents', 'Scan Physical Documents'],
+  ['assessment_preparation', 'Assessment Preparation'],
+  ['call_pending_documents', 'Call for Pending Documents'],
+  ['assessment_director_approval', 'Assessment – Director Approval'],
+  ['insurer_approval', 'Insurer Approval'],
+  ['insured_approval', 'Insured Approval / Consent'],
+  ['fsr_format_preparation', 'FSR Format Preparation'],
+  ['fsr_preparation', 'FSR Preparation'],
+  ['fsr_review', 'FSR Review'],
+  ['fsr_print_mail', 'FSR Print & Mail'],
+  ['report_dispatch', 'Report Dispatch'],
+  ['courier_tracking', 'Courier Tracking'],
+  ['entry_updation', 'Entry Updation After Completion'],
+  ['bill_entry', 'Bill Entry'],
+  ['other', 'Other'],
+];
+const TASK_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
+const TASK_STATUSES = ['not_started', 'in_progress', 'waiting', 'completed', 'cancelled'];
+const TASK_STATUS_LABELS = {
+  not_started: 'Not Started', in_progress: 'In Progress', waiting: 'Waiting',
+  completed: 'Completed', cancelled: 'Cancelled',
+};
+const TASK_STATUS_COLORS = {
+  not_started: 'var(--text-faint)', in_progress: 'var(--blue)', waiting: 'var(--amber)',
+  completed: 'var(--green)', cancelled: 'var(--text-faint)',
+};
+const TASK_PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
 
 const VISIT_REASONS = [
   'Initial Survey', 'Reinspection', 'Joint Inspection', 'Dismantling Inspection',
@@ -1203,22 +1519,24 @@ async function logout() {
 // ── API CALLS ─────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [jRes, lRes, sRes, iRes, bRes, setRes] = await Promise.all([
+    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes] = await Promise.all([
       fetch(API + '/api/jobs'),
       fetch(API + '/api/log'),
       fetch(API + '/api/staff'),
       fetch(API + '/api/insurers'),
       fetch(API + '/api/branches'),
       fetch(API + '/api/settings'),
+      fetch(API + '/api/tasks'),
     ]);
-    if ([jRes, lRes, sRes, iRes, bRes, setRes].some(r => r.status === 401)) { sessionExpired(); return; }
-    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok || !bRes.ok || !setRes.ok) throw new Error('bad response');
+    if ([jRes, lRes, sRes, iRes, bRes, setRes, tRes].some(r => r.status === 401)) { sessionExpired(); return; }
+    if (!jRes.ok || !lRes.ok || !sRes.ok || !iRes.ok || !bRes.ok || !setRes.ok || !tRes.ok) throw new Error('bad response');
     jobs = await jRes.json();
     log  = await lRes.json();
     TEAM = await sRes.json();
     INSURERS = await iRes.json();
     BRANCHES = await bRes.json();
     SETTINGS = await setRes.json();
+    tasks = await tRes.json();
     setOnline(true);
     buildLogFilters();
     buildInsurerList();
@@ -1266,6 +1584,17 @@ async function apiGet(path) {
   return r.json();
 }
 
+async function apiPut(path, body) {
+  const r = await fetch(API + path, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (r.status === 401) { sessionExpired(); throw new Error('Session expired — please sign in again.'); }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
 function setOnline(on) {
   document.getElementById('liveDot').classList.toggle('offline', !on);
 }
@@ -1276,6 +1605,8 @@ function renderAll() {
   renderKanban();
   renderStaff();
   renderLog();
+  renderTaskDashWidget();
+  renderTasksView();
 }
 
 // ── STATS STRIP ───────────────────────────────────────────────
@@ -1530,6 +1861,19 @@ function buildJobPanel(j) {
     return `<div class="act-row"><span class="act-ts">${ts}<br>${m?m.initials:''}</span><span class="act-text">${esc(a.text)}</span></div>`;
   }).join('');
 
+  // ── Tasks (V1.2) — compact summary + active linked tasks only; full
+  // history/filtering lives on the Tasks page via "View All Tasks".
+  const jobTasks = tasks.filter(t => t.job_id === j.id);
+  const openJobTasks = jobTasks.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+  const overdueJobTaskCount = jobTasks.filter(t => t.is_overdue).length;
+  const completedJobTaskCount = jobTasks.filter(t => t.status === 'completed').length;
+  const activeTasksHtml = [...openJobTasks].sort(taskSortCompare).map(t => {
+    const names = (t.assignee_ids||[]).map(id => teamMember(id)?.name).filter(Boolean).join(', ') || 'Unassigned';
+    return `<div class="act-row" style="cursor:pointer" onclick="openTaskDetail('${t.id}')">
+      <span class="act-text">${esc(t.title)} — ${esc(names)} — ${taskDueLabel(t)||'No due date'} — <span style="color:${TASK_STATUS_COLORS[t.status]}">${TASK_STATUS_LABELS[t.status]}</span>${t.is_overdue?' <span style="color:var(--red)">(Overdue)</span>':''}${t.is_blocked?' <span style="color:var(--red)">(Blocked)</span>':''}</span>
+    </div>`;
+  }).join('');
+
   return `
   <!-- Stage -->
   <div class="sp-section">
@@ -1652,6 +1996,21 @@ function buildJobPanel(j) {
       <button type="button" class="btn-secondary" onclick="openQueryHistory('${j.id}')">View Query History</button>
       <button type="button" class="btn-secondary" onclick="openFeeReceiptHistory('${j.id}')">View Fee Receipts</button>
       ${j.stage!=='closed' && j.billing?.closure_eligible && canCloseJobs() ? `<button type="button" class="btn-primary" style="flex:none" onclick="openCloseJobModal('${j.id}')">Close Job</button>` : ''}
+    </div>
+  </div>
+
+  <!-- Tasks (V1.2) -->
+  <div class="sp-section">
+    <div class="sp-section-label">Tasks</div>
+    <div class="progress-grid">
+      <div><strong>Open</strong><br>${openJobTasks.length}</div>
+      <div><strong>Overdue</strong><br><span style="color:${overdueJobTaskCount?'var(--red)':'inherit'}">${overdueJobTaskCount}</span></div>
+      <div><strong>Completed</strong><br>${completedJobTaskCount}</div>
+    </div>
+    <div class="activity-feed" style="margin-top:10px">${activeTasksHtml || '<div style="font-size:12px;color:var(--text-faint)">No open tasks.</div>'}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+      <button type="button" class="btn-secondary" onclick="openTaskForm('${j.id}')">+ Add Task</button>
+      <button type="button" class="btn-secondary" onclick="viewJobTasks('${j.id}')">View All Tasks</button>
     </div>
   </div>
 
@@ -2658,6 +3017,400 @@ async function deleteBranchEntry() {
 function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+}
+
+// ── TASKS (V1.2) ─────────────────────────────────────────────
+// India/office-local "today"/"now" — mirrors worker.js's IST semantics,
+// used for Overdue/Today/Upcoming bucketing and display. `is_overdue` and
+// `is_blocked` themselves are authoritative from the server (attached to
+// every task by listTasks()/getTaskWithDetails()), never recomputed here.
+function todayIST() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+function taskTypeLabel(v) { const m = TASK_TYPES.find(x => x[0] === v); return m ? m[1] : v; }
+function formatTaskDuration(mins) {
+  if (!mins) return '';
+  if (mins < 60) return mins + ' min';
+  const hrs = mins / 60;
+  return (Number.isInteger(hrs) ? hrs : hrs.toFixed(1)) + ' hr';
+}
+function taskDueLabel(t) {
+  if (!t.due_date) return '';
+  let label = 'Due ' + (t.due_date === todayIST() ? 'Today' : t.due_date);
+  if (t.due_time) label += ' ' + t.due_time;
+  return label;
+}
+function taskSortCompare(a, b) {
+  const pr = TASK_PRIORITY_RANK[a.priority] - TASK_PRIORITY_RANK[b.priority];
+  if (pr !== 0) return pr;
+  if (a.due_date === b.due_date && a.due_time && b.due_time) return a.due_time < b.due_time ? -1 : 1;
+  return a.created_at - b.created_at;
+}
+function taskMatchesSearch(t, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  if ((t.title || '').toLowerCase().includes(q)) return true;
+  if (t.job_id) {
+    const j = jobs.find(x => x.id === t.job_id);
+    if (j) {
+      if ((j.id || '').toLowerCase().includes(q)) return true;
+      if ((j.insured || '').toLowerCase().includes(q)) return true;
+      if ((j.claim_no || '').toLowerCase().includes(q)) return true;
+    }
+  }
+  return false;
+}
+
+function taskTypeOptionsHtml(selected) {
+  const opts = TASK_TYPES.map(([v, l]) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${l}</option>`).join('');
+  return selected ? opts : '<option value="" selected disabled>— Select Task Type —</option>' + opts;
+}
+function taskJobOptionsHtml(selectedJobId) {
+  const opts = jobs.map(j => `<option value="${j.id}" ${j.id === selectedJobId ? 'selected' : ''}>${j.id} — ${esc(j.title)}</option>`).join('');
+  return `<option value="" ${!selectedJobId ? 'selected' : ''}>— General Office Task —</option>` + opts;
+}
+function taskBlockedByOptionsHtml(excludeId, selected) {
+  return tasks.filter(t => t.id !== excludeId && t.status !== 'cancelled').map(t =>
+    `<option value="${t.id}" ${t.id === selected ? 'selected' : ''}>${esc(t.title)} (${TASK_STATUS_LABELS[t.status]})</option>`
+  ).join('');
+}
+function getTaskDurationMinutes(prefix) {
+  const sel = document.getElementById(prefix + '-duration-select').value;
+  if (!sel) return null;
+  if (sel === 'custom') {
+    const v = document.getElementById(prefix + '-duration-custom').value;
+    return v ? parseInt(v, 10) : null;
+  }
+  return parseInt(sel, 10);
+}
+function setTaskDurationFields(prefix, minutes) {
+  const sel = document.getElementById(prefix + '-duration-select');
+  const custom = document.getElementById(prefix + '-duration-custom');
+  const preset = ['5', '10', '15', '30', '45', '60', '90', '120'];
+  if (!minutes) { sel.value = ''; custom.hidden = true; custom.value = ''; return; }
+  if (preset.includes(String(minutes))) { sel.value = String(minutes); custom.hidden = true; custom.value = ''; }
+  else { sel.value = 'custom'; custom.hidden = false; custom.value = minutes; }
+}
+function toggleTaskDurationCustom(prefix) {
+  const sel = document.getElementById(prefix + '-duration-select');
+  document.getElementById(prefix + '-duration-custom').hidden = sel.value !== 'custom';
+}
+function toggleTaskWaitingReason(prefix) {
+  const sel = document.getElementById(prefix + '-status');
+  document.getElementById(prefix + '-waiting-reason-wrap').hidden = sel.value !== 'waiting';
+}
+
+// ── Add Task (full form; quick fields up top, rest under More Details) ──
+function openTaskForm(jobId) {
+  document.getElementById('tfm-title').value = '';
+  document.getElementById('tfm-type').innerHTML = taskTypeOptionsHtml();
+  document.getElementById('tfm-priority').value = 'normal';
+  document.getElementById('tfm-job').innerHTML = taskJobOptionsHtml(jobId || '');
+  document.getElementById('tfm-due-date').value = '';
+  document.getElementById('tfm-assign').innerHTML = chipsHtml(TEAM, currentUser ? [currentUser] : []);
+  document.getElementById('tfm-description').value = '';
+  document.getElementById('tfm-due-time').value = '';
+  setTaskDurationFields('tfm', null);
+  document.getElementById('tfm-blocked-by').innerHTML = '<option value="">— None —</option>' + taskBlockedByOptionsHtml(null, null);
+  document.getElementById('tfm-status').value = 'not_started';
+  document.getElementById('tfm-waiting-reason-wrap').hidden = true;
+  document.getElementById('tfm-waiting-reason').value = '';
+  document.getElementById('taskFormModal').hidden = false;
+}
+function closeTaskForm() { document.getElementById('taskFormModal').hidden = true; }
+
+async function submitTaskForm() {
+  const title = document.getElementById('tfm-title').value.trim();
+  if (!title) { alert('Task Title is required.'); return; }
+  const taskType = document.getElementById('tfm-type').value;
+  if (!taskType) { alert('Task Type is required.'); return; }
+  const assigneeIds = [...document.querySelectorAll('#tfm-assign .active')].map(el => el.dataset.id);
+  if (assigneeIds.length === 0) { alert('At least one assignee is required.'); return; }
+  const status = document.getElementById('tfm-status').value;
+  const waitingReason = document.getElementById('tfm-waiting-reason').value.trim();
+  if (status === 'waiting' && !waitingReason) { alert('Waiting Reason is required when Status is Waiting.'); return; }
+
+  const body = {
+    title, task_type: taskType,
+    description: document.getElementById('tfm-description').value.trim(),
+    priority: document.getElementById('tfm-priority').value,
+    job_id: document.getElementById('tfm-job').value || null,
+    due_date: document.getElementById('tfm-due-date').value,
+    due_time: document.getElementById('tfm-due-time').value,
+    expected_minutes: getTaskDurationMinutes('tfm'),
+    blocked_by_task_id: document.getElementById('tfm-blocked-by').value || null,
+    status, waiting_reason: waitingReason,
+    assignee_ids: assigneeIds,
+  };
+  try {
+    await apiPost('/api/tasks', body);
+    closeTaskForm();
+    fetchAll();
+  } catch(e) {
+    alert('Error creating task: ' + e.message);
+  }
+}
+
+// ── Task Detail / Edit ──
+async function openTaskDetail(taskId) {
+  let t;
+  try {
+    t = await apiGet('/api/tasks/' + encodeURIComponent(taskId));
+  } catch(e) {
+    alert('Error loading task: ' + e.message); return;
+  }
+  editingTaskId = t.id;
+  document.getElementById('td-task-id').textContent = t.id;
+  document.getElementById('td-title').value = t.title;
+  document.getElementById('td-type').innerHTML = taskTypeOptionsHtml(t.task_type);
+  document.getElementById('td-priority').value = t.priority;
+  document.getElementById('td-job').innerHTML = taskJobOptionsHtml(t.job_id || '');
+  document.getElementById('td-status').value = t.status;
+  toggleTaskWaitingReason('td');
+  document.getElementById('td-waiting-reason').value = t.waiting_reason || '';
+  document.getElementById('td-assign').innerHTML = chipsHtml(TEAM, t.assignee_ids || []);
+  document.getElementById('td-description').value = t.description || '';
+  document.getElementById('td-due-date').value = t.due_date || '';
+  document.getElementById('td-due-time').value = t.due_time || '';
+  setTaskDurationFields('td', t.expected_minutes);
+  document.getElementById('td-blocked-by').innerHTML = '<option value="">— None —</option>' + taskBlockedByOptionsHtml(t.id, t.blocked_by_task_id);
+  document.getElementById('td-completion-note').value = t.completion_note || '';
+
+  const qa = [];
+  if (t.status === 'not_started') qa.push(['Start (In Progress)', 'in_progress']);
+  if (t.status === 'in_progress') { qa.push(['Complete', 'completed']); qa.push(['Move to Waiting', 'waiting']); }
+  if (t.status === 'waiting') qa.push(['Resume (In Progress)', 'in_progress']);
+  if (!['completed', 'cancelled'].includes(t.status)) qa.push(['Complete', 'completed']);
+  const seen = new Set();
+  const uniqueQa = qa.filter(([, s]) => (seen.has(s) ? false : (seen.add(s), true)));
+  document.getElementById('td-quick-actions').innerHTML =
+    uniqueQa.map(([label, status]) => `<button type="button" class="btn-secondary" onclick="quickSetTaskStatus('${t.id}','${status}')">${label}</button>`).join('')
+    + (t.status === 'completed' ? `<button type="button" class="btn-secondary" onclick="quickSetTaskStatus('${t.id}','in_progress')">Reopen</button>` : '')
+    + (!['cancelled'].includes(t.status) ? `<button type="button" class="btn-secondary" style="color:var(--red)" onclick="quickSetTaskStatus('${t.id}','cancelled')">Cancel Task</button>` : '');
+
+  const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  const meta = [
+    `<div><strong>Assigned By</strong><br>${esc(teamMember(t.assigned_by)?.name || t.assigned_by || '—')}</div>`,
+    `<div><strong>Created</strong><br>${esc(teamMember(t.created_by)?.name || t.created_by || '—')} — ${fmt(t.created_at)}</div>`,
+    `<div><strong>Updated</strong><br>${fmt(t.updated_at)}</div>`,
+  ];
+  if (t.status === 'completed') meta.push(`<div><strong>Completed</strong><br>${esc(teamMember(t.completed_by)?.name || t.completed_by || '—')} — ${fmt(t.completed_at)}</div>`);
+  if (t.status === 'cancelled') meta.push(`<div><strong>Cancelled</strong><br>${esc(teamMember(t.cancelled_by)?.name || t.cancelled_by || '—')} — ${fmt(t.cancelled_at)}</div>`);
+  if (t.is_blocked) {
+    const blocker = tasks.find(x => x.id === t.blocked_by_task_id);
+    meta.push(`<div><strong>Blocked By</strong><br><span style="color:var(--red)">${blocker ? esc(blocker.title) : t.blocked_by_task_id} — not yet completed</span></div>`);
+  }
+  document.getElementById('td-meta').innerHTML = meta.join('');
+
+  const activity = [...(t.activity || [])].reverse().map(a => {
+    const m = teamMember(a.actor);
+    const ts = new Date(a.ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return `<div class="act-row"><span class="act-ts">${ts}<br>${m ? m.initials : esc(a.actor || '')}</span><span class="act-text">${esc(a.text)}</span></div>`;
+  }).join('');
+  document.getElementById('td-activity').innerHTML = activity || '<div style="font-size:12px;color:var(--text-faint)">No activity yet.</div>';
+
+  document.getElementById('taskDetailModal').hidden = false;
+}
+function closeTaskDetail() { document.getElementById('taskDetailModal').hidden = true; editingTaskId = null; }
+
+async function submitTaskDetail() {
+  if (!editingTaskId) return;
+  const title = document.getElementById('td-title').value.trim();
+  if (!title) { alert('Task Title is required.'); return; }
+  const taskType = document.getElementById('td-type').value;
+  if (!taskType) { alert('Task Type is required.'); return; }
+  const assigneeIds = [...document.querySelectorAll('#td-assign .active')].map(el => el.dataset.id);
+  if (assigneeIds.length === 0) { alert('At least one assignee is required.'); return; }
+  const status = document.getElementById('td-status').value;
+  const waitingReason = document.getElementById('td-waiting-reason').value.trim();
+  if (status === 'waiting' && !waitingReason) { alert('Waiting Reason is required when Status is Waiting.'); return; }
+  const blockedBy = document.getElementById('td-blocked-by').value || null;
+  if (blockedBy === editingTaskId) { alert('A task cannot be blocked by itself.'); return; }
+
+  const body = {
+    title, task_type: taskType,
+    description: document.getElementById('td-description').value.trim(),
+    priority: document.getElementById('td-priority').value,
+    job_id: document.getElementById('td-job').value || null,
+    due_date: document.getElementById('td-due-date').value,
+    due_time: document.getElementById('td-due-time').value,
+    expected_minutes: getTaskDurationMinutes('td'),
+    blocked_by_task_id: blockedBy,
+    status, waiting_reason: waitingReason,
+    completion_note: document.getElementById('td-completion-note').value.trim(),
+    assignee_ids: assigneeIds,
+  };
+  try {
+    await apiPut('/api/tasks/' + encodeURIComponent(editingTaskId), body);
+    closeTaskDetail();
+    fetchAll();
+  } catch(e) {
+    alert('Error saving task: ' + e.message);
+  }
+}
+
+// Direct one-click transitions for the common cases; moving TO Waiting
+// needs a mandatory reason, so it just focuses that field in the (already
+// open) detail form instead of guessing a reason via a blind prompt().
+async function quickSetTaskStatus(taskId, status) {
+  if (status === 'waiting') {
+    document.getElementById('td-status').value = 'waiting';
+    toggleTaskWaitingReason('td');
+    document.getElementById('td-waiting-reason').focus();
+    return;
+  }
+  if (status === 'cancelled' && !confirm('Cancel this task? It is retained (not deleted) and stays visible via All Tasks.')) return;
+  try {
+    await apiPut('/api/tasks/' + encodeURIComponent(taskId), { status });
+    closeTaskDetail();
+    fetchAll();
+  } catch(e) {
+    alert('Error updating task: ' + e.message);
+  }
+}
+
+// ── Tasks page (My Tasks / All Tasks) ──
+function setTaskViewMode(mode) {
+  taskViewMode = mode;
+  document.getElementById('taskModeMyBtn').classList.toggle('active', mode === 'my');
+  document.getElementById('taskModeAllBtn').classList.toggle('active', mode === 'all');
+  document.getElementById('taskFilters').hidden = mode !== 'all';
+  renderTasksView();
+}
+
+function buildTaskFilterDropdowns() {
+  const assigneeSel = document.getElementById('tf-assignee');
+  if (assigneeSel && assigneeSel.options.length <= 1) {
+    assigneeSel.innerHTML = '<option value="">All assignees</option>' + TEAM.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  }
+  const statusSel = document.getElementById('tf-status');
+  if (statusSel && statusSel.options.length <= 1) {
+    statusSel.innerHTML = '<option value="">All statuses</option>' + TASK_STATUSES.map(s => `<option value="${s}">${TASK_STATUS_LABELS[s]}</option>`).join('');
+  }
+  const prioritySel = document.getElementById('tf-priority');
+  if (prioritySel && prioritySel.options.length <= 1) {
+    prioritySel.innerHTML = '<option value="">All priorities</option>' + TASK_PRIORITIES.map(p => `<option value="${p}">${p[0].toUpperCase()+p.slice(1)}</option>`).join('');
+  }
+  const typeSel = document.getElementById('tf-type');
+  if (typeSel && typeSel.options.length <= 1) {
+    typeSel.innerHTML = '<option value="">All task types</option>' + TASK_TYPES.map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
+  }
+  const jobSel = document.getElementById('tf-job');
+  if (jobSel && jobSel.options.length <= 2) {
+    jobSel.innerHTML = '<option value="">All jobs</option><option value="__none__">General office tasks only</option>'
+      + jobs.map(j => `<option value="${j.id}">${j.id} — ${esc(j.title)}</option>`).join('');
+  }
+}
+
+function taskCardHtml(t) {
+  const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
+  const assignees = (t.assignee_ids || []).map(id => teamMember(id)).filter(Boolean);
+  const avatars = assignees.map(m => `<div class="avatar" style="background:${m.color}" title="${esc(m.name)}">${m.initials}</div>`).join('');
+  const dueLabel = taskDueLabel(t);
+  return `
+    <div class="task-card ${t.is_overdue ? 'overdue' : ''}" onclick="openTaskDetail('${t.id}')">
+      <div class="task-card-top">
+        <div>
+          <div class="task-card-title">${esc(t.title)}</div>
+          <div class="task-card-meta">${job ? `<span class="log-job-link" onclick="event.stopPropagation();openJob('${job.id}')">${job.id}</span> · ${esc(job.title)}` : 'General Office Task'} · ${esc(taskTypeLabel(t.task_type))}</div>
+        </div>
+        <div class="task-avatars">${avatars || '<span style="font-size:11px;color:var(--text-faint)">Unassigned</span>'}</div>
+      </div>
+      <div class="task-card-bottom">
+        <span class="task-priority ${t.priority}">${t.priority[0].toUpperCase()+t.priority.slice(1)}</span>
+        <span class="task-status-badge" style="color:${TASK_STATUS_COLORS[t.status]}">${TASK_STATUS_LABELS[t.status]}</span>
+        ${dueLabel ? `<span class="task-card-meta">${dueLabel}</span>` : ''}
+        ${t.expected_minutes ? `<span class="task-card-meta">${formatTaskDuration(t.expected_minutes)}</span>` : ''}
+        ${t.is_blocked ? '<span class="task-blocked-badge">Blocked</span>' : ''}
+      </div>
+    </div>`;
+}
+
+function renderTasksView() {
+  const container = document.getElementById('taskListContainer');
+  if (!container) return; // not yet in DOM (shouldn't happen, but stay safe on early renderAll() calls)
+  buildTaskFilterDropdowns();
+  const showCompleted = document.getElementById('tf-show-completed')?.checked;
+
+  let list = tasks;
+  if (taskViewMode === 'my') {
+    list = list.filter(t => (t.assignee_ids || []).includes(currentUser));
+  } else {
+    const assignee = document.getElementById('tf-assignee')?.value || '';
+    const status = document.getElementById('tf-status')?.value || '';
+    const priority = document.getElementById('tf-priority')?.value || '';
+    const type = document.getElementById('tf-type')?.value || '';
+    const job = document.getElementById('tf-job')?.value || '';
+    const overdueOnly = document.getElementById('tf-overdue')?.value === 'overdue';
+    const search = (document.getElementById('tf-search')?.value || '').trim();
+    if (assignee) list = list.filter(t => (t.assignee_ids || []).includes(assignee));
+    if (status) list = list.filter(t => t.status === status);
+    if (priority) list = list.filter(t => t.priority === priority);
+    if (type) list = list.filter(t => t.task_type === type);
+    if (job === '__none__') list = list.filter(t => !t.job_id);
+    else if (job) list = list.filter(t => t.job_id === job);
+    if (overdueOnly) list = list.filter(t => t.is_overdue);
+    if (search) list = list.filter(t => taskMatchesSearch(t, search));
+  }
+  if (!showCompleted) list = list.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+
+  if (list.length === 0) {
+    container.innerHTML = '<div class="task-empty">No tasks found.</div>';
+    return;
+  }
+
+  if (taskViewMode === 'all') {
+    const sorted = [...list].sort(taskSortCompare);
+    container.innerHTML = `<div class="task-list">${sorted.map(taskCardHtml).join('')}</div>`;
+    return;
+  }
+
+  // My Tasks: grouped Overdue / Today / Upcoming / No Due Date / Completed
+  // / Cancelled — Completed/Cancelled sections only appear at all once the
+  // "Show Completed / Cancelled" box is checked (list is already filtered
+  // to exclude them otherwise), never loaded/rendered by default.
+  const today = todayIST();
+  const groups = { overdue: [], today: [], upcoming: [], no_due_date: [], completed: [], cancelled: [] };
+  list.forEach(t => {
+    if (t.status === 'completed') { groups.completed.push(t); return; }
+    if (t.status === 'cancelled') { groups.cancelled.push(t); return; }
+    if (t.is_overdue) { groups.overdue.push(t); return; }
+    if (t.due_date === today) { groups.today.push(t); return; }
+    if (t.due_date && t.due_date > today) { groups.upcoming.push(t); return; }
+    groups.no_due_date.push(t);
+  });
+  Object.values(groups).forEach(g => g.sort(taskSortCompare));
+
+  const sections = [
+    ['overdue', 'Overdue'], ['today', 'Today'], ['upcoming', 'Upcoming'],
+    ['no_due_date', 'No Due Date'], ['completed', 'Completed'], ['cancelled', 'Cancelled'],
+  ];
+  container.innerHTML = sections.filter(([k]) => groups[k].length > 0).map(([k, label]) => `
+    <div class="task-group-hdr">${label} <span class="task-group-count">${groups[k].length}</span></div>
+    <div class="task-list">${groups[k].map(taskCardHtml).join('')}</div>
+  `).join('');
+}
+
+function renderTaskDashWidget() {
+  const widget = document.getElementById('taskDashWidget');
+  if (!widget || !currentUser) return;
+  const mine = tasks.filter(t => (t.assignee_ids || []).includes(currentUser) && t.status !== 'completed' && t.status !== 'cancelled');
+  const today = todayIST();
+  document.getElementById('taskDashOpen').textContent = mine.length;
+  document.getElementById('taskDashToday').textContent = mine.filter(t => t.due_date === today).length;
+  document.getElementById('taskDashOverdue').textContent = mine.filter(t => t.is_overdue).length;
+}
+
+// Jumps from a job's "View All Tasks" link into the Tasks page, All Tasks
+// mode, pre-filtered to that job — never a second job-detail implementation.
+function viewJobTasks(jobId) {
+  closePanel();
+  switchView('tasks');
+  setTaskViewMode('all');
+  const jobSel = document.getElementById('tf-job');
+  buildTaskFilterDropdowns();
+  if (jobSel) jobSel.value = jobId;
+  renderTasksView();
 }
 
 // ── HELPERS ───────────────────────────────────────────────────
