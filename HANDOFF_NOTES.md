@@ -191,11 +191,29 @@ Answers "where exactly is this claim in the post-survey process?" — the full l
 
 **Verification**: no browser-testable feature in this round could be exercised via real API writes without creating production test records (explicitly forbidden), so validation logic was tested with plain Node unit tests against extracted copies of `validateMilestones()` and `fsrReadinessWarning()` (10 and 5 cases respectively, including a mocked DB for the Director-role check), and all new UI was verified via live-browser DOM tests with injected fake `jobs`/`TEAM` data (not real API calls) — screenshots confirmed the Claim Progress grid, the collapsible sections, and the Insurer-Approval-Required live field-toggle all render and behave correctly. Row counts (`jobs`=2, `claim_reminders`=0, `document_receipt_events`=0) confirmed unchanged before and after deployment.
 
+## TMS V1.0 — FSR / Submission / Dispatch (done, commit `4642721`, migration `010_fsr_submission_dispatch.sql`)
+
+Extends the lifecycle past FSR Preparation: Final Verification → FSR Submission → Mail Sent → Hard Copy Dispatch (conditional) → POD → Queries. **FSR submitted is explicitly not claim closed** — submission logically advances the pipeline stage to `bill_pending` (an id that already existed in the original `STAGES` list from the very first version of the app, never used until now), and Billing/Closure remain entirely out of scope for V1.1 to pick up.
+
+**FSR Final Verification is deliberately separate from Assessment's Director Verification** (V0.9) — same shape (Pending/Approved/Returned for Revision, date, Director-only Verified By, remarks) but a distinct set of `fsr_final_verification_*` columns, since they represent different sign-offs at different points in the lifecycle. The Director-role check needed for both is now one shared `requireDirectorStaff()` helper server-side.
+
+**The hard-copy conditional branch was the specific thing flagged for close review**: `hard_copy_required` is Yes/No/To Be Decided, and courier company, AWB/tracking number, and POD are *never* mandatory regardless of that setting — the only conditional requirement is `hard_copy_sent_date`, and only when both `hard_copy_required` and `hard_copy_sent` are `'yes'`. This was verified three ways before calling it done: (1) a Node unit test asserting the email-only path (`hard_copy_required: 'no'`) validates cleanly with every courier/POD field blank; (2) a live-browser test that opened the actual job panel with `hard_copy_required: 'no'`, called `saveJob()` for real, and confirmed zero alerts fired and the PATCH body carried through `hard_copy_required: 'no'` / `pod_status: 'not_applicable'` untouched; (3) confirmed all 9 hard-copy/POD field wrappers (`sp-hc-sent-wrap` through `sp-pod-remarks-wrap`) report `display: none` via `toggleHardCopyFields()`, not just visually tucked away. Selecting "Yes" reveals the same fields; "To Be Decided" shows its own distinct note, same three-way pattern as V0.9's Insurer Approval Required toggle.
+
+**New `claim_queries` child table** — unlimited per job, Open/Replied/Closed, with its own `queryHistoryModal`/`queryFormModal` pair cloned directly from the Reminders pattern (V0.9) rather than designed from scratch. Query response fields (`response_date`, `response_details`) are optional even when marking Replied/Closed, per the spec's explicit "do not make the logic unnecessarily rigid."
+
+**Stage advance is conservative and forward-only**: when `fsr_submitted` transitions to `'yes'` in a save, the client checks the job's current stage index against `bill_pending`'s index in the existing `STAGES` array — advances only if strictly earlier, never fires if the user is also manually picking a stage in that same save (that choice wins), and a job already at or past `bill_pending` (including `closed`) is left untouched. Verified with 6 scenario tests covering all of those branches, including a case at the `query` stage (chronologically before `bill_pending` but easy to mistake for "later").
+
+**Audit logging** extends the V0.9 `MILESTONE_FIELD_MAP` diff engine with the 18 new fields, plus five more exact spec-quoted phrasings: FSR returned-for-revision, FSR submitted (with date and mode folded in), Hard Copy marked Not Required, Hard Copy dispatched (with courier/AWB folded in), and POD marked Delivered (with date). Reminders/receipts' pattern from V0.9 — server-side per-field diff via `appendJobActivity()` — is reused as-is for query add/edit.
+
+**Job Detail panel**: Claim Progress grid now also shows Final Verification, FSR (submitted + date), Submission Mode, Mail Sent, Hard Copy, POD, and an open-query count; the three new field groups (Final Verification, FSR Submission, Hard Copy/Dispatch/POD combined into one section) are additional collapsed `<details>`, keeping the same pattern as V0.9 rather than introducing a new UI idiom for an already-long panel.
+
+**Verification**: same constraint as V0.9 — no production test records permitted, so `validateFinalReport()` and the stage-advance function were both unit-tested standalone (7 and 6 cases respectively), and the hard-copy-bypass claim specifically was verified live against the actual deployed `saveJob()`/`buildJobPanel()` code with injected fake job data, not just logic in isolation. Row counts (`jobs`=2, `claim_queries`=0) confirmed unchanged before and after deployment; `survey_visits` is at 1 from genuine user activity between sessions, untouched by this round.
+
 ## Not yet built / open items
 
-The broader "Job Update" lifecycle scope beyond what V0.9 covers — FSR submission/email/hard-copy dispatch/courier/POD, billing (bill amount/fee receipt/outstanding), closure, tasks, live-working timers, the Document Requirement Master / dynamic LOR engine — was explicitly deferred by the V0.9 spec itself and remains open for later versions.
+Billing (bill date/amount, fee receipt, outstanding, partial payment), closure eligibility and claim closure, the Document Requirement Master / dynamic LOR engine, task engine, and Live Working timers all remain explicitly out of scope, per V1.0's own instructions, for V1.1 and beyond.
 
-**NEXT VERSION: TMS V1.0 — FSR / Submission / Dispatch.**
+**NEXT VERSION: TMS V1.1 — Billing & Closure.**
 
 ## Known minor items not acted on
 
