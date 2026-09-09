@@ -128,6 +128,20 @@ new Function(m[1]); console.log('JS syntax OK');
 grep -oE 'id=\"[^\"]+\"' public/index.html | sort | uniq -d   # must be empty (no dup DOM ids)
 ```
 
+## Roadmap (updated 2026-09-09 — supersedes any earlier roadmap mention in this file)
+
+The originally planned "V1.2 — Requirements Intelligence / Master" is **postponed**, not cancelled — do not start it without an explicit new go-ahead. The user re-sequenced the roadmap as follows:
+
+* V1.1A — Billing Simplification & Invoice Correction ✅ done
+* **V1.2 — Task Management ← current**
+* V1.3 — Live Working / Task Time Tracking
+* V1.4 — My Work / Now–Next–Later
+* V1.5 — Workflow Intelligence
+* V1.6 — Director Control Centre
+* Requirements Intelligence / Documents + LOR Management — postponed until after the core Task/Work system (V1.2–V1.4) is stable
+
+Always trust this section's version-to-feature mapping over any older "NEXT VERSION" line found earlier in this file's history.
+
 ## Feature history (chronological, see `git log` for exact commits)
 
 1. Initial deploy: Wrangler install, D1 database creation, schema apply, Worker deploy, GitHub push, Cloudflare Pages→Workers Git integration pivot
@@ -253,9 +267,9 @@ A focused correction release on top of V1.1 — replaces the simplified "Bill Am
 
 ## Not yet built / open items
 
-The Document Requirement Master / dynamic LOR engine ("Requirements Intelligence / Master"), task engine, Live Working timers, automatic reminder sending, email automation, invoice PDF generation, accounting/GST integration, and Director Control Centre all remain explicitly out of scope for V1.2 and beyond. Reopening/editing a closed job remains explicitly deferred — no reopening workflow exists yet.
+The Document Requirement Master / dynamic LOR engine ("Requirements Intelligence / Master") is **postponed**, not cancelled — see the Roadmap section above; do not start it without an explicit new go-ahead. Task Management, Live Working/Task Time Tracking, My Work, Workflow Intelligence, and Director Control Centre are the immediate roadmap (V1.2–V1.6, see Roadmap section). Automatic reminder sending, email automation, invoice PDF generation, and accounting/GST integration remain out of scope, no target version yet. Reopening/editing a closed job remains explicitly deferred — no reopening workflow exists yet.
 
-**NEXT VERSION: TMS V1.2 — Requirements Intelligence / Master.**
+**NEXT VERSION: TMS V1.2 — Task Management.**
 
 ## Known minor items not acted on
 
