@@ -415,6 +415,27 @@ details.sp-section[open] summary{margin-bottom:0}
 .bi-table tr.bi-row-ok td{color:var(--text-pri)}
 .bi-err-cell{white-space:normal!important;max-width:220px}
 
+/* ── ALL CLAIMS (spreadsheet-style list) ── */
+.ac-wrap{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:16px 20px}
+.ac-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;flex-shrink:0}
+.ac-count{margin-left:auto;font-size:12px;color:var(--text-faint)}
+.ac-table-wrap{flex:1;overflow:auto;border:1px solid var(--border);border-radius:var(--radius)}
+.ac-table{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--surface)}
+.ac-table th{position:sticky;top:0;background:var(--ground);color:var(--text-sec);text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;z-index:1}
+.ac-table th:hover{color:var(--text-pri)}
+.ac-table th .ac-sort-arrow{color:var(--amber);margin-left:3px}
+.ac-table td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.ac-table tbody tr{cursor:pointer}
+.ac-table tbody tr:hover{background:var(--ground)}
+.ac-table tbody tr:nth-child(even){background:rgba(128,128,128,.04)}
+.ac-stage-pill{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:100px;color:#fff;white-space:nowrap}
+.ac-health-on_track{color:var(--green)}
+.ac-health-watch{color:var(--amber)}
+.ac-health-attention{color:#F97316}
+.ac-health-stalled{color:var(--red);font-weight:600}
+.ac-health-closed{color:var(--text-faint)}
+.ac-empty{padding:40px;text-align:center;color:var(--text-faint);font-size:13px}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -458,6 +479,7 @@ details.sp-section[open] summary{margin-bottom:0}
     <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
     <button class="nav-btn" data-view="mywork" onclick="switchView('mywork')">🎯 My Work</button>
     <button class="nav-btn" data-view="tasks" onclick="switchView('tasks')">📋 Tasks</button>
+    <button class="nav-btn" data-view="allclaims" onclick="switchView('allclaims')">🗂 All Claims</button>
     <button class="nav-btn" data-view="controlcentre" id="controlCentreNavBtn" onclick="switchView('controlcentre')" hidden>🧭 Control Centre</button>
     <button class="nav-btn" data-view="staff" onclick="switchView('staff')">🛠 Admin</button>
     <button class="nav-btn" data-view="log" onclick="switchView('log')">📜 Work Log</button>
@@ -501,10 +523,32 @@ details.sp-section[open] summary{margin-bottom:0}
       <div class="mywork-dash-link">Open My Work →</div>
     </div>
     <div class="attention-wrap" id="attentionWrap">
-      <div class="mw-section-hdr" style="margin-top:0">Claims Needing Attention</div>
+      <div class="mw-section-hdr" style="margin-top:0">Claims Needing Attention <button type="button" class="wh-correct-btn" onclick="switchView('allclaims')">View All Claims →</button></div>
       <div id="attentionList"></div>
     </div>
     <div class="kanban" id="kanban"></div>
+  </div>
+</div>
+
+<!-- ── ALL CLAIMS (spreadsheet-style list) ── -->
+<div class="view" id="view-allclaims">
+  <div class="ac-wrap">
+    <div class="ac-toolbar">
+      <input class="task-search" id="ac-search" placeholder="Search job no., insured, claim no., policy no., insurer" oninput="renderAllClaimsView()">
+      <select class="log-filter-sel" id="ac-stage" onchange="renderAllClaimsView()">
+        <option value="">All stages</option>
+        <option value="__active__">All open (not closed)</option>
+      </select>
+      <select class="log-filter-sel" id="ac-branch" onchange="renderAllClaimsView()"><option value="">All branches</option></select>
+      <select class="log-filter-sel" id="ac-director" onchange="renderAllClaimsView()"><option value="">All directors</option></select>
+      <span class="ac-count" id="ac-count"></span>
+    </div>
+    <div class="ac-table-wrap">
+      <table class="ac-table" id="ac-table">
+        <thead><tr id="ac-thead"></tr></thead>
+        <tbody id="ac-tbody"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -2001,6 +2045,7 @@ function renderAll() {
   renderMyWorkDashWidget();
   renderMyWorkView();
   renderClaimsNeedingAttention();
+  renderAllClaimsView();
 }
 
 // ── STATS STRIP ───────────────────────────────────────────────
@@ -2400,6 +2445,130 @@ function renderClaimsNeedingAttention() {
   el.innerHTML = rows.length === 0
     ? '<div class="task-empty">No claims currently need attention.</div>'
     : `<div class="attention-list">${rows.map(attentionRowHtml).join('')}</div>`;
+}
+
+// ── ALL CLAIMS (spreadsheet-style list) ─────────────────────────────
+// A single ordinary-scrolling table over every job — the Dashboard's
+// Kanban board scrolls per-column (each stage's card list has its own
+// nested scroll region), which stops being usable once a stage holds
+// dozens of cards (e.g. right after a bulk import lands most rows in
+// "New Claim Received"). This view reuses the already-loaded `jobs` array
+// (no new fetch) and lets the whole page scroll normally instead.
+let acSortField = 'created_at';
+let acSortDir = 'desc';
+
+function acBranchNames(j) { return (j.branch_ids || []).map(id => { const b = branchMember(id); return b ? b.name : id; }).join(', '); }
+function acDirectorNames(j) { return (j.director_ids || []).map(id => { const m = teamMember(id); return m ? m.name : id; }).join(', '); }
+function acWorkflowOf(jobId) { return (workflowAttention || []).find(r => r.job_id === jobId) || null; }
+function acHealthOf(j) {
+  if (j.stage === 'closed') return { label: 'Closed', cls: 'closed', rank: -1, step: 'Closed' };
+  const wf = acWorkflowOf(j.id);
+  if (!wf) return { label: '—', cls: '', rank: 0, step: '—' };
+  const HEALTH_RANK = { stalled: 3, attention: 2, watch: 1, on_track: 0 };
+  return {
+    label: WORKFLOW_HEALTH_LABELS[wf.analysis.workflow_health] || wf.analysis.workflow_health,
+    cls: wf.analysis.workflow_health,
+    rank: HEALTH_RANK[wf.analysis.workflow_health] ?? 0,
+    step: wf.analysis.current_step_label || wf.analysis.phase_label || '—',
+  };
+}
+
+const AC_COLUMNS = [
+  { key: 'id', label: 'Job No', sort: j => j.id },
+  { key: 'insured', label: 'Insured', sort: j => (j.insured || '').toLowerCase() },
+  { key: 'insurer', label: 'Insurer', sort: j => (j.insurer || '').toLowerCase() },
+  { key: 'policy_no', label: 'Policy No', sort: j => (j.policy_no || '').toLowerCase() },
+  { key: 'claim_no', label: 'Claim No', sort: j => (j.claim_no || '').toLowerCase() },
+  { key: 'stage', label: 'Stage', sort: j => j.stage },
+  { key: 'step', label: 'Current Step', sort: j => acHealthOf(j).step.toLowerCase() },
+  { key: 'health', label: 'Health', sort: j => acHealthOf(j).rank },
+  { key: 'branch', label: 'Branch', sort: j => acBranchNames(j).toLowerCase() },
+  { key: 'director', label: 'Director', sort: j => acDirectorNames(j).toLowerCase() },
+  { key: 'date_intimation', label: 'Deputation Date', sort: j => j.date_intimation || '' },
+  { key: 'date_loss', label: 'Loss Date', sort: j => j.date_loss || '' },
+  { key: 'created_at', label: 'Age (days)', sort: j => j.created_at },
+];
+
+function acSortBy(field) {
+  if (acSortField === field) { acSortDir = acSortDir === 'asc' ? 'desc' : 'asc'; }
+  else { acSortField = field; acSortDir = field === 'id' || field === 'insured' ? 'asc' : 'desc'; }
+  renderAllClaimsView();
+}
+
+function buildAcFilterOptions() {
+  const stageSel = document.getElementById('ac-stage');
+  const branchSel = document.getElementById('ac-branch');
+  const dirSel = document.getElementById('ac-director');
+  if (stageSel && stageSel.options.length <= 2) {
+    stageSel.innerHTML += STAGES.map(s => `<option value="${s.id}">${esc(s.label)}</option>`).join('');
+  }
+  if (branchSel && branchSel.options.length <= 1) {
+    branchSel.innerHTML = '<option value="">All branches</option>' + BRANCHES.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  }
+  if (dirSel && dirSel.options.length <= 1) {
+    dirSel.innerHTML = '<option value="">All directors</option>' + TEAM.filter(isDirector).map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  }
+}
+
+function renderAllClaimsView() {
+  const theadEl = document.getElementById('ac-thead');
+  const tbodyEl = document.getElementById('ac-tbody');
+  if (!theadEl || !tbodyEl) return;
+  buildAcFilterOptions();
+
+  const search = (document.getElementById('ac-search').value || '').trim().toLowerCase();
+  const stage = document.getElementById('ac-stage').value;
+  const branch = document.getElementById('ac-branch').value;
+  const director = document.getElementById('ac-director').value;
+
+  let rows = jobs.slice();
+  if (stage === '__active__') rows = rows.filter(j => j.stage !== 'closed');
+  else if (stage) rows = rows.filter(j => j.stage === stage);
+  if (branch) rows = rows.filter(j => (j.branch_ids || []).includes(branch));
+  if (director) rows = rows.filter(j => (j.director_ids || []).includes(director));
+  if (search) {
+    rows = rows.filter(j => `${j.id} ${j.insured || ''} ${j.insurer || ''} ${j.claim_no || ''} ${j.policy_no || ''}`.toLowerCase().includes(search));
+  }
+
+  const col = AC_COLUMNS.find(c => c.key === acSortField) || AC_COLUMNS[0];
+  rows.sort((a, b) => {
+    const av = col.sort(a), bv = col.sort(b);
+    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return acSortDir === 'asc' ? cmp : -cmp;
+  });
+
+  document.getElementById('ac-count').textContent = `${rows.length} of ${jobs.length} claims`;
+
+  theadEl.innerHTML = AC_COLUMNS.map(c =>
+    `<th onclick="acSortBy('${c.key}')">${esc(c.label)}${acSortField === c.key ? `<span class="ac-sort-arrow">${acSortDir === 'asc' ? '▲' : '▼'}</span>` : ''}</th>`
+  ).join('');
+
+  if (rows.length === 0) {
+    tbodyEl.innerHTML = `<tr><td colspan="${AC_COLUMNS.length}"><div class="ac-empty">No claims match the current filters.</div></td></tr>`;
+    return;
+  }
+
+  const nowMs = Date.now();
+  tbodyEl.innerHTML = rows.map(j => {
+    const stageInfo = STAGES.find(s => s.id === j.stage);
+    const health = acHealthOf(j);
+    const ageDays = Math.floor((nowMs - j.created_at) / 86400000);
+    return `<tr onclick="openJob('${j.id}')">
+      <td><strong>${esc(j.id)}</strong></td>
+      <td>${esc(j.insured || '—')}</td>
+      <td>${esc(j.insurer || '—')}</td>
+      <td>${esc(j.policy_no || '—')}</td>
+      <td>${esc(j.claim_no || '—')}</td>
+      <td><span class="ac-stage-pill" style="background:${stageInfo ? stageInfo.color : '#6B7280'}">${esc(stageInfo ? stageInfo.label : j.stage)}</span></td>
+      <td>${esc(health.step)}</td>
+      <td class="ac-health-${health.cls}">${esc(health.label)}</td>
+      <td>${esc(acBranchNames(j) || '—')}</td>
+      <td>${esc(acDirectorNames(j) || '—')}</td>
+      <td>${esc(j.date_intimation || '—')}</td>
+      <td>${esc(j.date_loss || '—')}</td>
+      <td>${ageDays}d</td>
+    </tr>`;
+  }).join('');
 }
 
 function buildJobPanel(j) {
