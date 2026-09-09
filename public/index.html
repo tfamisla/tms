@@ -848,6 +848,90 @@ details.sp-section[open] summary{margin-bottom:0}
   </div>
 </div>
 
+<!-- ── QUERY HISTORY MODAL ── -->
+<div class="modal-overlay" id="queryHistoryModal" hidden onclick="e=>e.target===this&&closeQueryHistory()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Query History — <span id="qh-job-id" class="mono" style="font-size:14px"></span></h2>
+      <button class="sp-close" onclick="closeQueryHistory()">✕</button>
+    </div>
+    <div class="modal-body">
+      <button type="button" class="btn-add-contact" onclick="openQueryForm()">+ Add Query</button>
+      <div id="queryList"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeQueryHistory()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD/EDIT QUERY MODAL ── -->
+<div class="modal-overlay" id="queryFormModal" hidden onclick="e=>e.target===this&&closeQueryForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="qf-modal-title">Add Query</h2>
+      <button class="sp-close" onclick="closeQueryForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field">
+          <label>Query Date *</label>
+          <input id="qf-date" type="date">
+        </div>
+        <div class="form-field">
+          <label>Query From</label>
+          <select id="qf-from">
+            <option value="Insurer">Insurer</option>
+            <option value="Insured">Insured</option>
+            <option value="Broker">Broker</option>
+            <option value="Internal">Internal</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Query Type *</label>
+          <select id="qf-type" onchange="document.getElementById('qf-type-other').hidden = this.value !== 'Other'">
+            <option value="Insurer Query">Insurer Query</option>
+            <option value="Insured Query">Insured Query</option>
+            <option value="Broker Query">Broker Query</option>
+            <option value="Internal Clarification">Internal Clarification</option>
+            <option value="Document Query">Document Query</option>
+            <option value="Assessment Query">Assessment Query</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field" id="qf-type-other" hidden>
+          <label>Custom Query Type</label>
+          <input id="qf-type-custom">
+        </div>
+        <div class="form-field">
+          <label>Status</label>
+          <select id="qf-status">
+            <option value="open">Open</option>
+            <option value="replied">Replied</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+        <div></div>
+        <div class="form-field full">
+          <label>Query Details *</label>
+          <textarea id="qf-details" class="notes-area" rows="3"></textarea>
+        </div>
+        <div class="form-field"><label>Response Date</label><input id="qf-response-date" type="date"></div>
+        <div></div>
+        <div class="form-field full">
+          <label>Response Details</label>
+          <textarea id="qf-response-details" class="notes-area" rows="3"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitQueryForm()">Save Query</button>
+      <button class="btn-secondary" onclick="closeQueryForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // CONFIG — set your Worker URL after deploy
@@ -905,6 +989,8 @@ let claimReminders = [];
 let editingReminderId = null;
 let claimReceipts = [];
 let editingReceiptId = null;
+let claimQueries = [];
+let editingQueryId = null;
 let editingVisitId = null;
 
 const VISIT_REASONS = [
@@ -1290,6 +1376,7 @@ function openJob(id) {
   const body = document.getElementById('spBody');
   body.innerHTML = buildJobPanel(j);
   toggleInsurerApprovalFields();
+  toggleHardCopyFields();
 
   document.getElementById('overlay').classList.add('open');
   document.getElementById('sidePanel').classList.add('open');
@@ -1436,12 +1523,20 @@ function buildJobPanel(j) {
       <div><strong>Insurer Approval</strong><br>${j.insurer_approval_required==='no'?'Not Required':j.insurer_approval_required==='to_be_decided'?'To Be Decided':(INSURER_APPROVAL_STATUS_LABELS[j.insurer_approval_status]||'Pending')}</div>
       <div><strong>Insured Consent</strong><br>${INSURED_CONSENT_LABELS[j.insured_consent_status]||'Not Started'}</div>
       <div><strong>FSR Preparation</strong><br>${FSR_PREP_LABELS[j.fsr_preparation_status]||'Not Started'}</div>
+      <div><strong>Final Verification</strong><br>${FINAL_VERIFICATION_LABELS[j.fsr_final_verification_status]||'Pending'}</div>
+      <div><strong>FSR</strong><br>${j.fsr_submitted==='yes'?`Submitted${j.fsr_submission_date?' — '+j.fsr_submission_date:''}`:'Not Submitted'}</div>
+      <div><strong>Submission Mode</strong><br>${esc(j.fsr_submission_mode||'—')}</div>
+      <div><strong>Mail Sent</strong><br>${j.mail_sent_date||'—'}</div>
+      <div><strong>Hard Copy</strong><br>${hardCopyLine(j)}</div>
+      <div><strong>POD</strong><br>${podLine(j)}</div>
+      <div><strong>Queries</strong><br>${j.open_query_count?`${j.open_query_count} Open`:'None Open'}</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
       <button type="button" class="btn-secondary" onclick="openSurveyHistory('${j.id}')">View Survey History</button>
       ${j.survey_status !== 'completed' ? `<button type="button" class="btn-secondary" onclick="markSurveyCompleted('${j.id}')">Mark Survey Completed</button>` : ''}
       <button type="button" class="btn-secondary" onclick="openReminderHistory('${j.id}')">View Reminder History</button>
       <button type="button" class="btn-secondary" onclick="openReceiptHistory('${j.id}')">View Document Receipt History</button>
+      <button type="button" class="btn-secondary" onclick="openQueryHistory('${j.id}')">View Query History</button>
     </div>
   </div>
 
@@ -1600,6 +1695,96 @@ function buildJobPanel(j) {
       <div class="sp-field"><label>FSR Preparation Date</label><input type="date" id="sp-f-fsr-date" value="${j.fsr_preparation_date||''}"></div>
       <div class="sp-field sp-field-full"><label>Remarks</label><input id="sp-f-fsr-remarks" value="${esc(j.fsr_preparation_remarks||'')}"></div>
       ${fsrReadinessWarning(j) ? `<div class="sp-field-full" style="font-size:12px;color:var(--amber)">⚠ Not yet ready: ${esc(fsrReadinessWarning(j))}</div>` : '<div class="sp-field-full" style="font-size:12px;color:var(--green)">✓ Prerequisites met — FSR can proceed.</div>'}
+    </div>
+  </details>
+
+  <!-- Final Verification -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">Final Verification</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="sp-field"><label>Final Verification Status</label>
+        <select id="sp-f-fv-status">
+          <option value="pending" ${j.fsr_final_verification_status==='pending'?'selected':''}>Pending</option>
+          <option value="approved" ${j.fsr_final_verification_status==='approved'?'selected':''}>Approved</option>
+          <option value="returned_for_revision" ${j.fsr_final_verification_status==='returned_for_revision'?'selected':''}>Returned for Revision</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>Final Verification Date</label><input type="date" id="sp-f-fv-date" value="${j.fsr_final_verification_date||''}"></div>
+      <div class="sp-field"><label>Verified By</label>
+        <select id="sp-f-fv-by">
+          <option value="">— Select Director —</option>
+          ${TEAM.filter(isDirector).map(m=>`<option value="${m.id}" ${j.fsr_final_verified_by===m.id?'selected':''}>${esc(m.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="sp-field sp-field-full"><label>Final Verification Remarks</label><input id="sp-f-fv-remarks" value="${esc(j.fsr_final_verification_remarks||'')}"></div>
+      ${j.fsr_final_verification_status==='returned_for_revision' ? '<div class="sp-field-full" style="font-size:12px;color:var(--red)">⚠ FSR requires correction — returned for revision.</div>' : ''}
+    </div>
+  </details>
+
+  <!-- FSR Submission -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">FSR Submission</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="sp-field"><label>FSR Submitted</label>
+        <select id="sp-f-fsr-submitted">
+          <option value="" ${!j.fsr_submitted?'selected':''}>—</option>
+          <option value="yes" ${j.fsr_submitted==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.fsr_submitted==='no'?'selected':''}>No</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>Submission Date</label><input type="date" id="sp-f-fsr-submission-date" value="${j.fsr_submission_date||''}"></div>
+      <div class="sp-field"><label>Submission Mode</label>
+        <select id="sp-f-fsr-submission-mode">
+          <option value="" ${!j.fsr_submission_mode?'selected':''}>—</option>
+          <option value="Email" ${j.fsr_submission_mode==='Email'?'selected':''}>Email</option>
+          <option value="Portal" ${j.fsr_submission_mode==='Portal'?'selected':''}>Portal</option>
+          <option value="Hard Copy" ${j.fsr_submission_mode==='Hard Copy'?'selected':''}>Hard Copy</option>
+          <option value="Other" ${j.fsr_submission_mode==='Other'?'selected':''}>Other</option>
+        </select>
+      </div>
+      <div class="sp-field"><label>Mail Sent Date</label><input type="date" id="sp-f-mail-sent-date" value="${j.mail_sent_date||''}"></div>
+      <div class="sp-field sp-field-full"><label>Submission Remarks</label><input id="sp-f-fsr-submission-remarks" value="${esc(j.fsr_submission_remarks||'')}"></div>
+      ${fsrSubmissionReadinessWarning(j) ? `<div class="sp-field-full" style="font-size:12px;color:var(--amber)">⚠ ${esc(fsrSubmissionReadinessWarning(j))}</div>` : '<div class="sp-field-full" style="font-size:12px;color:var(--green)">✓ Ready to submit.</div>'}
+    </div>
+  </details>
+
+  <!-- Hard Copy / Dispatch / POD -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">Hard Copy / Dispatch / POD</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="sp-field"><label>Hard Copy Required?</label>
+        <select id="sp-f-hc-required" onchange="toggleHardCopyFields()">
+          <option value="to_be_decided" ${j.hard_copy_required==='to_be_decided'?'selected':''}>To Be Decided</option>
+          <option value="yes" ${j.hard_copy_required==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.hard_copy_required==='no'?'selected':''}>No</option>
+        </select>
+      </div>
+      <div class="sp-field-full" id="sp-hc-not-required-note" style="font-size:12px;color:var(--text-faint)">
+        ${j.hard_copy_required==='no' ? 'Hard Copy: Not Required. POD: Not Applicable.' : j.hard_copy_required==='to_be_decided' ? 'Hard Copy Requirement: To Be Decided.' : ''}
+      </div>
+      <div class="sp-field" id="sp-hc-sent-wrap"><label>Hard Copy Sent</label>
+        <select id="sp-f-hc-sent">
+          <option value="" ${!j.hard_copy_sent?'selected':''}>—</option>
+          <option value="yes" ${j.hard_copy_sent==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.hard_copy_sent==='no'?'selected':''}>No</option>
+        </select>
+      </div>
+      <div class="sp-field" id="sp-hc-date-wrap"><label>Hard Copy Sent Date</label><input type="date" id="sp-f-hc-date" value="${j.hard_copy_sent_date||''}"></div>
+      <div class="sp-field" id="sp-hc-courier-wrap"><label>Courier Company</label><input id="sp-f-hc-courier" value="${esc(j.courier_company||'')}" placeholder="e.g. DTDC, Blue Dart, Hand Delivery"></div>
+      <div class="sp-field" id="sp-hc-awb-wrap"><label>AWB / Tracking Number</label><input id="sp-f-hc-awb" class="mono" value="${esc(j.awb_tracking_no||'')}"></div>
+      <div class="sp-field sp-field-full" id="sp-hc-remarks-wrap"><label>Dispatch Remarks</label><input id="sp-f-hc-remarks" value="${esc(j.dispatch_remarks||'')}"></div>
+
+      <div class="modal-subsection-label" id="sp-pod-label-wrap">Proof of Delivery (POD)</div>
+      <div class="sp-field" id="sp-pod-status-wrap"><label>POD Status</label>
+        <select id="sp-f-pod-status">
+          <option value="pending" ${j.pod_status==='pending'?'selected':''}>Pending</option>
+          <option value="delivered" ${j.pod_status==='delivered'?'selected':''}>Delivered</option>
+          <option value="returned" ${j.pod_status==='returned'?'selected':''}>Returned</option>
+          <option value="not_applicable" ${j.pod_status==='not_applicable'?'selected':''}>Not Applicable</option>
+        </select>
+      </div>
+      <div class="sp-field" id="sp-pod-date-wrap"><label>POD Date</label><input type="date" id="sp-f-pod-date" value="${j.pod_date||''}"></div>
+      <div class="sp-field sp-field-full" id="sp-pod-remarks-wrap"><label>POD Remarks</label><input id="sp-f-pod-remarks" value="${esc(j.pod_remarks||'')}"></div>
     </div>
   </details>
 
@@ -1776,6 +1961,22 @@ async function saveJob() {
     }
   }
 
+  // ── FSR Final Verification / Submission / Dispatch / POD (V1.0) ──
+  // Hard Copy Required = No/To Be Decided must never require courier/POD —
+  // these checks are only ever reachable when hard_copy_required is 'yes'.
+  if (gv('sp-f-fv-status') === 'approved' && (!gv('sp-f-fv-date') || !gv('sp-f-fv-by'))) {
+    alert('Final Verification Date and Verified By are required when status is Approved.'); return;
+  }
+  if (gv('sp-f-fsr-submitted') === 'yes' && !gv('sp-f-fsr-submission-date')) {
+    alert('FSR Submission Date is required when FSR Submitted is Yes.'); return;
+  }
+  if (gv('sp-f-hc-required') === 'yes' && gv('sp-f-hc-sent') === 'yes' && !gv('sp-f-hc-date')) {
+    alert('Hard Copy Sent Date is required when Hard Copy Required and Sent are both Yes.'); return;
+  }
+  if (gv('sp-f-pod-status') === 'delivered' && !gv('sp-f-pod-date')) {
+    alert('POD Date is required when POD Status is Delivered.'); return;
+  }
+
   const MILESTONE_FIELD_MAP = [
     ['sp-f-ila-required', 'ila_required', 'ILA Required', REQUIRED_LABELS],
     ['sp-f-ila-issued', 'ila_issued', 'ILA Issued', {yes:'Yes',no:'No'}],
@@ -1807,6 +2008,24 @@ async function saveJob() {
     ['sp-f-fsr-status', 'fsr_preparation_status', 'FSR Preparation Status', FSR_PREP_LABELS],
     ['sp-f-fsr-date', 'fsr_preparation_date', 'FSR Preparation Date'],
     ['sp-f-fsr-remarks', 'fsr_preparation_remarks', 'FSR Preparation Remarks'],
+    ['sp-f-fv-status', 'fsr_final_verification_status', 'FSR Final Verification', FINAL_VERIFICATION_LABELS],
+    ['sp-f-fv-date', 'fsr_final_verification_date', 'FSR Final Verification Date'],
+    ['sp-f-fv-by', 'fsr_final_verified_by', 'FSR Final Verification Verified By', Object.fromEntries(TEAM.map(m=>[m.id,m.name]))],
+    ['sp-f-fv-remarks', 'fsr_final_verification_remarks', 'FSR Final Verification Remarks'],
+    ['sp-f-fsr-submitted', 'fsr_submitted', 'FSR Submitted', {yes:'Yes',no:'No'}],
+    ['sp-f-fsr-submission-date', 'fsr_submission_date', 'FSR Submission Date'],
+    ['sp-f-fsr-submission-mode', 'fsr_submission_mode', 'FSR Submission Mode'],
+    ['sp-f-fsr-submission-remarks', 'fsr_submission_remarks', 'FSR Submission Remarks'],
+    ['sp-f-mail-sent-date', 'mail_sent_date', 'Mail Sent Date'],
+    ['sp-f-hc-required', 'hard_copy_required', 'Hard Copy Required', REQUIRED_LABELS],
+    ['sp-f-hc-sent', 'hard_copy_sent', 'Hard Copy Sent', {yes:'Yes',no:'No'}],
+    ['sp-f-hc-date', 'hard_copy_sent_date', 'Hard Copy Sent Date'],
+    ['sp-f-hc-courier', 'courier_company', 'Courier Company'],
+    ['sp-f-hc-awb', 'awb_tracking_no', 'AWB / Tracking Number'],
+    ['sp-f-hc-remarks', 'dispatch_remarks', 'Dispatch Remarks'],
+    ['sp-f-pod-status', 'pod_status', 'POD Status', POD_STATUS_LABELS],
+    ['sp-f-pod-date', 'pod_date', 'POD Date'],
+    ['sp-f-pod-remarks', 'pod_remarks', 'POD Remarks'],
   ];
   for (const [domId, key, label, valueLabels] of MILESTONE_FIELD_MAP) {
     const el = document.getElementById(domId);
@@ -1816,13 +2035,42 @@ async function saveJob() {
     const oldVal = j[key] || '';
     if (val === oldVal) continue;
     const disp = v => (valueLabels ? (valueLabels[v] || v || '—') : (v || '—'));
-    // Wording called out explicitly by the spec for these two transitions.
+    const who = teamMember(actor)?.name || actor;
+    // Wording called out explicitly by the spec for these transitions.
     if (key === 'director_verification_status' && val === 'returned_for_revision') {
-      actEntries.push({ text: `Assessment returned for revision by ${teamMember(actor)?.name || actor}.`, ts: Date.now(), actor });
+      actEntries.push({ text: `Assessment returned for revision by ${who}.`, ts: Date.now(), actor });
     } else if (key === 'insurer_approval_required' && val === 'no') {
-      actEntries.push({ text: `Insurer Approval marked Not Required by ${teamMember(actor)?.name || actor}.`, ts: Date.now(), actor });
+      actEntries.push({ text: `Insurer Approval marked Not Required by ${who}.`, ts: Date.now(), actor });
+    } else if (key === 'fsr_final_verification_status' && val === 'returned_for_revision') {
+      actEntries.push({ text: `FSR returned for revision by ${who}.`, ts: Date.now(), actor });
+    } else if (key === 'fsr_submitted' && val === 'yes') {
+      const mode = gv('sp-f-fsr-submission-mode');
+      const subDate = gv('sp-f-fsr-submission-date') || j.fsr_submission_date;
+      actEntries.push({ text: `FSR submitted${subDate ? ' on ' + subDate : ''}${mode ? ' by ' + mode : ''}.`, ts: Date.now(), actor });
+    } else if (key === 'hard_copy_required' && val === 'no') {
+      actEntries.push({ text: `Hard Copy marked Not Required.`, ts: Date.now(), actor });
+    } else if (key === 'hard_copy_sent' && val === 'yes') {
+      const courier = gv('sp-f-hc-courier');
+      const awb = gv('sp-f-hc-awb');
+      actEntries.push({ text: `Hard Copy dispatched${courier ? ' by ' + courier : ''}${awb ? ' — AWB ' + awb : ''}.`, ts: Date.now(), actor });
+    } else if (key === 'pod_status' && val === 'delivered') {
+      const podDate = gv('sp-f-pod-date') || j.pod_date;
+      actEntries.push({ text: `POD marked Delivered${podDate ? ' on ' + podDate : ''}.`, ts: Date.now(), actor });
     } else {
-      actEntries.push({ text: `${teamMember(actor)?.name || actor} changed ${label} from ${disp(oldVal)} to ${disp(val)}.`, ts: Date.now(), actor });
+      actEntries.push({ text: `${who} changed ${label} from ${disp(oldVal)} to ${disp(val)}.`, ts: Date.now(), actor });
+    }
+  }
+
+  // Conservative, forward-only stage advance: FSR submitted -> move the
+  // pipeline to Bill Pending, but never move a later-stage claim backwards
+  // and never touch a manual stage choice the user is making in this same
+  // save (updates.stage already set above takes priority).
+  if (updates.fsr_submitted === 'yes' && (j.fsr_submitted || '') !== 'yes' && updates.stage === undefined) {
+    const curIdx = STAGES.findIndex(s => s.id === j.stage);
+    const billIdx = STAGES.findIndex(s => s.id === 'bill_pending');
+    if (curIdx !== -1 && billIdx !== -1 && curIdx < billIdx) {
+      updates.stage = 'bill_pending';
+      actEntries.push({ text: `Stage moved to "Bill Pending" (FSR submitted)`, ts: Date.now(), actor });
     }
   }
 
@@ -2302,6 +2550,51 @@ function fsrReadinessWarning(j) {
   return missing.length ? missing.join('; ') : null;
 }
 
+// ── FSR FINAL VERIFICATION / SUBMISSION / DISPATCH (V1.0) ────────
+const FINAL_VERIFICATION_LABELS = { pending: 'Pending', approved: 'Approved', returned_for_revision: 'Returned for Revision' };
+const POD_STATUS_LABELS = { pending: 'Pending', delivered: 'Delivered', returned: 'Returned', not_applicable: 'Not Applicable' };
+const QUERY_STATUS_LABELS = { open: 'Open', replied: 'Replied', closed: 'Closed' };
+const QUERY_FROM_OPTIONS = ['Insurer', 'Insured', 'Broker', 'Internal', 'Other'];
+const QUERY_TYPES = ['Insurer Query', 'Insured Query', 'Broker Query', 'Internal Clarification', 'Document Query', 'Assessment Query', 'Other'];
+
+function hardCopyLine(j) {
+  if (j.hard_copy_required === 'no') return 'Not Required';
+  if (j.hard_copy_required === 'to_be_decided') return 'To Be Decided';
+  if (j.hard_copy_sent === 'yes') return `Sent${j.hard_copy_sent_date ? ' — ' + j.hard_copy_sent_date : ''}`;
+  return 'Pending';
+}
+
+function podLine(j) {
+  if (j.hard_copy_required === 'no') return 'Not Applicable';
+  return POD_STATUS_LABELS[j.pod_status] || 'Pending';
+}
+
+// FSR Preparation readiness (fsrReadinessWarning, above) feeds Assessment ->
+// Consent; this is the separate check for whether SUBMISSION is appropriate.
+function fsrSubmissionReadinessWarning(j) {
+  const missing = [];
+  if (j.fsr_preparation_status !== 'ready') missing.push('FSR Preparation not yet Ready');
+  if (j.fsr_final_verification_status !== 'approved') missing.push('FSR Final Verification not yet Approved');
+  if (j.insured_consent_status !== 'accepted') missing.push('Insured Consent not yet Accepted');
+  return missing.length ? missing.join('; ') : null;
+}
+
+function toggleHardCopyFields() {
+  const required = document.getElementById('sp-f-hc-required').value;
+  const show = required === 'yes';
+  ['sp-hc-sent-wrap', 'sp-hc-date-wrap', 'sp-hc-courier-wrap', 'sp-hc-awb-wrap', 'sp-hc-remarks-wrap',
+   'sp-pod-label-wrap', 'sp-pod-status-wrap', 'sp-pod-date-wrap', 'sp-pod-remarks-wrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? '' : 'none';
+  });
+  const note = document.getElementById('sp-hc-not-required-note');
+  if (note) {
+    note.style.display = show ? 'none' : '';
+    note.textContent = required === 'no' ? 'Hard Copy: Not Required. POD: Not Applicable.'
+      : required === 'to_be_decided' ? 'Hard Copy Requirement: To Be Decided.' : '';
+  }
+}
+
 // Inspecting-staff names are hidden from non-admins when the admin has
 // set Inspection Staff Visibility to Hidden. The server already strips
 // inspected_by_ids from the API response in that case (enforced there,
@@ -2563,6 +2856,91 @@ async function submitReceiptForm() {
     fetchAll();
   } catch(e) {
     alert('Error saving receipt: ' + e.message);
+  }
+}
+
+// ── QUERIES (V1.0) ───────────────────────────────────────────
+async function openQueryHistory(jobId) {
+  currentSurveyJobId = jobId;
+  document.getElementById('qh-job-id').textContent = jobId;
+  document.getElementById('queryHistoryModal').hidden = false;
+  document.getElementById('queryList').innerHTML = '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">Loading…</div>';
+  try {
+    claimQueries = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/queries');
+  } catch(e) {
+    claimQueries = [];
+  }
+  renderQueryList();
+}
+function closeQueryHistory() { document.getElementById('queryHistoryModal').hidden = true; }
+
+function renderQueryList() {
+  document.getElementById('queryList').innerHTML = claimQueries.length === 0
+    ? '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">No queries recorded yet.</div>'
+    : [...claimQueries].reverse().map(q => `
+      <div class="act-row" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px" onclick="openQueryForm('${q.id}')" title="Click to edit">
+        <div style="display:flex;justify-content:space-between;gap:10px;font-weight:600;font-size:13px">
+          <span>${esc(q.query_type)}${q.query_from ? ' (' + esc(q.query_from) + ')' : ''}</span>
+          <span style="display:flex;align-items:center;gap:8px;white-space:nowrap">
+            <span class="stage-badge" style="color:${q.status==='open'?'#EF4444':q.status==='replied'?'#0EA5E9':'#22C55E'};border-color:${q.status==='open'?'#EF444422':q.status==='replied'?'#0EA5E922':'#22C55E22'}">${QUERY_STATUS_LABELS[q.status]||q.status}</span>
+            <span class="mono" style="color:var(--text-faint);font-weight:400;font-size:11px">${q.query_date}</span>
+          </span>
+        </div>
+        <div style="font-size:12px;color:var(--text-sec)">${esc(q.query_details)}</div>
+        ${q.response_details ? `<div style="font-size:12px;color:var(--text-faint)">Response (${q.response_date||'—'}): ${esc(q.response_details)}</div>` : ''}
+      </div>`).join('');
+}
+
+function openQueryForm(queryId) {
+  editingQueryId = queryId || null;
+  const q = queryId ? claimQueries.find(x => x.id === queryId) : null;
+  document.getElementById('qf-modal-title').textContent = q ? 'Edit Query' : 'Add Query';
+  document.getElementById('qf-date').value = q ? q.query_date : '';
+  document.getElementById('qf-from').value = q ? (q.query_from || 'Insurer') : 'Insurer';
+  const knownType = q ? (QUERY_TYPES.includes(q.query_type) ? q.query_type : 'Other') : 'Insurer Query';
+  document.getElementById('qf-type').value = knownType;
+  document.getElementById('qf-type-other').hidden = knownType !== 'Other';
+  document.getElementById('qf-type-custom').value = (q && knownType === 'Other') ? q.query_type : '';
+  document.getElementById('qf-status').value = q ? q.status : 'open';
+  document.getElementById('qf-details').value = q ? (q.query_details || '') : '';
+  document.getElementById('qf-response-date').value = q ? (q.response_date || '') : '';
+  document.getElementById('qf-response-details').value = q ? (q.response_details || '') : '';
+  document.getElementById('queryFormModal').hidden = false;
+}
+function closeQueryForm() { document.getElementById('queryFormModal').hidden = true; }
+
+async function submitQueryForm() {
+  const date = document.getElementById('qf-date').value;
+  if (!date) { alert('Query Date is required.'); return; }
+  let type = document.getElementById('qf-type').value;
+  if (type === 'Other') {
+    type = document.getElementById('qf-type-custom').value.trim();
+    if (!type) { alert('Please enter a custom query type.'); return; }
+  }
+  const details = document.getElementById('qf-details').value.trim();
+  if (!details) { alert('Query Details are required.'); return; }
+
+  const body = {
+    query_date: date,
+    query_from: document.getElementById('qf-from').value,
+    query_type: type,
+    query_details: details,
+    status: document.getElementById('qf-status').value,
+    response_date: document.getElementById('qf-response-date').value,
+    response_details: document.getElementById('qf-response-details').value.trim(),
+  };
+  try {
+    if (editingQueryId) {
+      await apiPatch('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/queries/' + encodeURIComponent(editingQueryId), body);
+    } else {
+      await apiPost('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/queries', body);
+    }
+    closeQueryForm();
+    claimQueries = await apiGet('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/queries');
+    renderQueryList();
+    fetchAll();
+  } catch(e) {
+    alert('Error saving query: ' + e.message);
   }
 }
 </script>

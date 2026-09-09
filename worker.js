@@ -42,11 +42,23 @@ const MILESTONE_FIELDS = [
   'fsr_preparation_status', 'fsr_preparation_date', 'fsr_preparation_remarks',
 ];
 
+// FSR final verification / submission / dispatch / POD fields (V1.0) —
+// same reasoning as MILESTONE_FIELDS: meaningful non-'' SQL defaults.
+const FINAL_REPORT_FIELDS = [
+  'fsr_final_verification_status', 'fsr_final_verification_date',
+  'fsr_final_verified_by', 'fsr_final_verification_remarks',
+  'fsr_submitted', 'fsr_submission_date', 'fsr_submission_mode', 'fsr_submission_remarks',
+  'mail_sent_date',
+  'hard_copy_required', 'hard_copy_sent', 'hard_copy_sent_date',
+  'courier_company', 'awb_tracking_no', 'dispatch_remarks',
+  'pod_status', 'pod_date', 'pod_remarks',
+];
+
 const UPDATABLE_FIELDS = [
   'title', ...JOB_TEXT_FIELDS, 'survey_date', 'survey_status',
   'appointment_date', 'appointment_confirmed', 'stage',
   'director_ids', 'surveyor_ids', 'branch_ids', 'backstaff_ids', 'contacts',
-  ...MILESTONE_FIELDS,
+  ...MILESTONE_FIELDS, ...FINAL_REPORT_FIELDS,
   'notes', 'docs',
 ];
 
@@ -142,6 +154,12 @@ function isNonNegativeNumber(v) {
 
 // Cross-field milestone rules (V0.9). `body` may be a partial PATCH, so each
 // check falls back to the existing row's value for fields not being changed.
+async function requireDirectorStaff(db, staffId, label) {
+  const staffRow = await db.prepare('SELECT role FROM staff WHERE id = ?').bind(staffId).first();
+  if (!staffRow) throw new Error(`${label} staff not found`);
+  if (!/director/i.test(staffRow.role || '')) throw new Error(`${label} must be a Director-role staff member`);
+}
+
 async function validateMilestones(db, existing, body) {
   const eff = field => (body[field] !== undefined ? body[field] : existing[field]);
 
@@ -158,11 +176,7 @@ async function validateMilestones(db, existing, body) {
     if (!eff('director_verified_by')) throw new Error('Verified By is required when status is Approved');
   }
   const dvBy = eff('director_verified_by');
-  if (dvBy) {
-    const staffRow = await db.prepare('SELECT role FROM staff WHERE id = ?').bind(dvBy).first();
-    if (!staffRow) throw new Error('Verified By staff not found');
-    if (!/director/i.test(staffRow.role || '')) throw new Error('Verified By must be a Director-role staff member');
-  }
+  if (dvBy) await requireDirectorStaff(db, dvBy, 'Verified By');
 
   const iaStatus = eff('insurer_approval_status');
   if ((iaStatus === 'approved' || iaStatus === 'partially_approved') && !eff('insurer_approval_date')) {
@@ -182,6 +196,35 @@ async function validateMilestones(db, existing, body) {
   }
 }
 
+// FSR Final Verification / Submission / Dispatch / POD (V1.0). Deliberately
+// asymmetric: hard_copy_required has NO bearing on what's required here —
+// courier/AWB are never mandatory, and hard_copy_sent_date is only ever
+// required when hard copy is both required AND marked sent. This must stay
+// a genuine bypass, not just a hidden field, when Hard Copy Required = No.
+async function validateFinalReport(db, existing, body) {
+  const eff = field => (body[field] !== undefined ? body[field] : existing[field]);
+
+  const fvStatus = eff('fsr_final_verification_status');
+  if (fvStatus === 'approved') {
+    if (!eff('fsr_final_verification_date')) throw new Error('FSR Final Verification Date is required when status is Approved');
+    if (!eff('fsr_final_verified_by')) throw new Error('Verified By is required when FSR Final Verification is Approved');
+  }
+  const fvBy = eff('fsr_final_verified_by');
+  if (fvBy) await requireDirectorStaff(db, fvBy, 'FSR Final Verification Verified By');
+
+  if (eff('fsr_submitted') === 'yes' && !eff('fsr_submission_date')) {
+    throw new Error('FSR Submission Date is required when FSR Submitted is Yes');
+  }
+
+  if (eff('hard_copy_required') === 'yes' && eff('hard_copy_sent') === 'yes' && !eff('hard_copy_sent_date')) {
+    throw new Error('Hard Copy Sent Date is required when Hard Copy Required and Sent are both Yes');
+  }
+
+  if (eff('pod_status') === 'delivered' && !eff('pod_date')) {
+    throw new Error('POD Date is required when POD Status is Delivered');
+  }
+}
+
 async function listJobs(db) {
   const { results } = await db.prepare('SELECT * FROM jobs ORDER BY updated_at DESC').all();
   const { results: visits } = await db.prepare(
@@ -193,6 +236,9 @@ async function listJobs(db) {
   const { results: receipts } = await db.prepare(
     'SELECT job_id FROM document_receipt_events'
   ).all();
+  const { results: queries } = await db.prepare(
+    'SELECT job_id, status FROM claim_queries'
+  ).all();
 
   const byJob = {};
   for (const v of visits) (byJob[v.job_id] ||= []).push(v);
@@ -200,6 +246,8 @@ async function listJobs(db) {
   for (const r of reminders) (remByJob[r.job_id] ||= []).push(r);
   const recCountByJob = {};
   for (const r of receipts) recCountByJob[r.job_id] = (recCountByJob[r.job_id] || 0) + 1;
+  const openQueryCountByJob = {};
+  for (const q of queries) if (q.status === 'open') openQueryCountByJob[q.job_id] = (openQueryCountByJob[q.job_id] || 0) + 1;
 
   return results.map(row => {
     const job = rowToJob(row);
@@ -214,6 +262,7 @@ async function listJobs(db) {
     job.last_reminder_date = lastRem ? lastRem.reminder_date : null;
 
     job.document_receipt_count = recCountByJob[job.id] || 0;
+    job.open_query_count = openQueryCountByJob[job.id] || 0;
     return job;
   });
 }
@@ -285,6 +334,7 @@ async function updateJob(db, id, body) {
   validatePolicyPeriod(effectiveFrom, effectiveTo);
   await validateJobAssignments(db, body);
   await validateMilestones(db, existing, body);
+  await validateFinalReport(db, existing, body);
 
   const sets = [];
   const values = [];
@@ -597,6 +647,88 @@ async function updateDocumentReceipt(db, jobId, receiptId, body, user) {
   }
 
   return rowToReceipt(await db.prepare('SELECT * FROM document_receipt_events WHERE id = ?').bind(receiptId).first());
+}
+
+// ── CLAIM QUERIES (V1.0) ─────────────────────────────────────────
+async function listQueries(db, jobId) {
+  const { results } = await db.prepare(
+    'SELECT * FROM claim_queries WHERE job_id = ? ORDER BY created_at ASC'
+  ).bind(jobId).all();
+  return results;
+}
+
+async function createQuery(db, jobId, body, user) {
+  const job = await db.prepare('SELECT id FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) throw new Error('job not found');
+
+  const queryDate = (body.query_date || '').trim();
+  const queryFrom = (body.query_from || '').trim();
+  const queryType = (body.query_type || '').trim();
+  const queryDetails = (body.query_details || '').trim();
+  const status = ['open', 'replied', 'closed'].includes(body.status) ? body.status : 'open';
+
+  if (!EVENT_DATE_RE.test(queryDate)) throw new Error('A valid query date (YYYY-MM-DD) is required');
+  if (!queryType) throw new Error('Query type is required');
+  if (!queryDetails) throw new Error('Query details are required');
+
+  const now = Date.now();
+  const id = `QR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO claim_queries (id, job_id, query_date, query_from, query_type, query_details, status, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, queryDate, queryFrom, queryType, queryDetails, status, user.id, now, now).run();
+
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} added query — ${queryType}${queryFrom ? ' (' + queryFrom + ')' : ''} — ${queryDate}.`,
+    ts: now, actor: user.id,
+  }]);
+
+  return { id, job_id: jobId, query_date: queryDate, query_from: queryFrom, query_type: queryType,
+    query_details: queryDetails, status, response_date: '', response_details: '',
+    created_by: user.id, created_at: now, updated_at: now };
+}
+
+async function updateQuery(db, jobId, queryId, body, user) {
+  const existing = await db.prepare('SELECT * FROM claim_queries WHERE id = ? AND job_id = ?')
+    .bind(queryId, jobId).first();
+  if (!existing) throw new Error('query not found');
+
+  const next = {
+    query_date: body.query_date !== undefined ? String(body.query_date).trim() : existing.query_date,
+    query_from: body.query_from !== undefined ? String(body.query_from).trim() : existing.query_from,
+    query_type: body.query_type !== undefined ? String(body.query_type).trim() : existing.query_type,
+    query_details: body.query_details !== undefined ? String(body.query_details).trim() : existing.query_details,
+    status: body.status !== undefined
+      ? (['open', 'replied', 'closed'].includes(body.status) ? body.status : existing.status)
+      : existing.status,
+    response_date: body.response_date !== undefined ? String(body.response_date).trim() : (existing.response_date || ''),
+    response_details: body.response_details !== undefined ? String(body.response_details).trim() : (existing.response_details || ''),
+  };
+  if (!EVENT_DATE_RE.test(next.query_date)) throw new Error('A valid query date (YYYY-MM-DD) is required');
+  if (!next.query_type) throw new Error('Query type is required');
+  if (!next.query_details) throw new Error('Query details are required');
+
+  const changeLines = [];
+  if (next.status !== existing.status) changeLines.push(`status from ${existing.status} to ${next.status}`);
+  if (next.response_date !== (existing.response_date || '') || next.response_details !== (existing.response_details || '')) {
+    changeLines.push('response recorded');
+  }
+  if (next.query_date !== existing.query_date) changeLines.push(`date from ${existing.query_date} to ${next.query_date}`);
+  if (next.query_type !== existing.query_type) changeLines.push(`type from "${existing.query_type}" to "${next.query_type}"`);
+  if (next.query_details !== existing.query_details) changeLines.push('details');
+
+  const now = Date.now();
+  await db.prepare(`
+    UPDATE claim_queries SET query_date=?, query_from=?, query_type=?, query_details=?, status=?, response_date=?, response_details=?, updated_at=?
+    WHERE id = ?
+  `).bind(next.query_date, next.query_from, next.query_type, next.query_details, next.status,
+    next.response_date, next.response_details, now, queryId).run();
+
+  if (changeLines.length > 0) {
+    await appendJobActivity(db, jobId, [{ text: `${user.id} updated query ${changeLines.join('; ')}.`, ts: now, actor: user.id }]);
+  }
+
+  return db.prepare('SELECT * FROM claim_queries WHERE id = ?').bind(queryId).first();
 }
 
 async function getSetting(db, key) {
@@ -1053,6 +1185,24 @@ export default {
           const receiptId = decodeURIComponent(receiptItemMatch[2]);
           const body = await request.json();
           return json(await updateDocumentReceipt(db, jobId, receiptId, body, user));
+        }
+
+        const queryCollectionMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/queries\/?$/);
+        if (queryCollectionMatch) {
+          const jobId = decodeURIComponent(queryCollectionMatch[1]);
+          if (request.method === 'GET') return json(await listQueries(db, jobId));
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await createQuery(db, jobId, body, user), 201);
+          }
+        }
+
+        const queryItemMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/queries\/([^/]+)$/);
+        if (queryItemMatch && request.method === 'PATCH') {
+          const jobId = decodeURIComponent(queryItemMatch[1]);
+          const queryId = decodeURIComponent(queryItemMatch[2]);
+          const body = await request.json();
+          return json(await updateQuery(db, jobId, queryId, body, user));
         }
       }
 

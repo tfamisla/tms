@@ -90,6 +90,25 @@ CREATE TABLE IF NOT EXISTS jobs (
   fsr_preparation_status TEXT NOT NULL DEFAULT 'not_started',  -- 'not_started'|'in_preparation'|'ready'
   fsr_preparation_date   TEXT DEFAULT '',
   fsr_preparation_remarks TEXT DEFAULT '',
+  -- ── FSR Final Verification / Submission / Dispatch (V1.0) ──
+  fsr_final_verification_status   TEXT NOT NULL DEFAULT 'pending',  -- 'pending'|'approved'|'returned_for_revision'
+  fsr_final_verification_date     TEXT DEFAULT '',
+  fsr_final_verified_by           TEXT DEFAULT '',   -- staff id, must have a Director role
+  fsr_final_verification_remarks  TEXT DEFAULT '',
+  fsr_submitted            TEXT DEFAULT '',   -- ''|'yes'|'no'
+  fsr_submission_date      TEXT DEFAULT '',
+  fsr_submission_mode      TEXT DEFAULT '',   -- 'Email'|'Portal'|'Hard Copy'|'Other'
+  fsr_submission_remarks   TEXT DEFAULT '',
+  mail_sent_date           TEXT DEFAULT '',
+  hard_copy_required       TEXT NOT NULL DEFAULT 'to_be_decided',  -- 'yes'|'no'|'to_be_decided'
+  hard_copy_sent           TEXT DEFAULT '',   -- ''|'yes'|'no'
+  hard_copy_sent_date      TEXT DEFAULT '',
+  courier_company          TEXT DEFAULT '',
+  awb_tracking_no          TEXT DEFAULT '',
+  dispatch_remarks         TEXT DEFAULT '',
+  pod_status               TEXT NOT NULL DEFAULT 'pending',  -- 'pending'|'delivered'|'returned'|'not_applicable'
+  pod_date                 TEXT DEFAULT '',
+  pod_remarks              TEXT DEFAULT '',
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -206,3 +225,22 @@ CREATE TABLE IF NOT EXISTS document_receipt_events (
   FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_document_receipt_events_job ON document_receipt_events (job_id);
+
+-- ── Claim Queries (V1.0) ─────────────────────────────────────
+-- One job -> many queries, unlimited. Status: 'open'|'replied'|'closed'.
+CREATE TABLE IF NOT EXISTS claim_queries (
+  id               TEXT    PRIMARY KEY,
+  job_id           TEXT    NOT NULL,
+  query_date       TEXT    NOT NULL,
+  query_from       TEXT    DEFAULT '',   -- 'Insurer'|'Insured'|'Broker'|'Internal'|'Other'
+  query_type       TEXT    NOT NULL,     -- preset type or custom "Other" text
+  query_details    TEXT    NOT NULL DEFAULT '',
+  status           TEXT    NOT NULL DEFAULT 'open',  -- 'open'|'replied'|'closed'
+  response_date    TEXT    DEFAULT '',
+  response_details TEXT    DEFAULT '',
+  created_by       TEXT    DEFAULT '',
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_claim_queries_job ON claim_queries (job_id);
