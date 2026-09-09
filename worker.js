@@ -54,6 +54,14 @@ const FINAL_REPORT_FIELDS = [
   'pod_status', 'pod_date', 'pod_remarks',
 ];
 
+// Billing fields (V1.1) — live in the `job_billing` sidecar table, NOT as
+// jobs columns (jobs was already at the D1 ~100-column-per-table limit; see
+// HANDOFF_NOTES.md). Deliberately excludes closure_date/closed_by/
+// closure_remarks, which only the dedicated POST /api/jobs/:id/close
+// endpoint may ever write (never the generic job PATCH). Handled separately
+// from UPDATABLE_FIELDS via upsertJobBilling(), not the generic jobs SET loop.
+const BILLING_FIELDS = ['bill_required', 'bill_date', 'bill_number', 'bill_amount', 'billing_remarks'];
+
 const UPDATABLE_FIELDS = [
   'title', ...JOB_TEXT_FIELDS, 'survey_date', 'survey_status',
   'appointment_date', 'appointment_confirmed', 'stage',
@@ -152,6 +160,98 @@ function isNonNegativeNumber(v) {
   return !isNaN(n) && n >= 0;
 }
 
+// ── CURRENCY (V1.1) ───────────────────────────────────────────────
+// All billing math happens in integer paise to avoid floating-point drift;
+// rupee strings (possibly comma-formatted) are only ever the input/output
+// format at the edges.
+function toPaise(v) {
+  if (!v) return 0;
+  const n = parseFloat(String(v).replace(/,/g, ''));
+  if (isNaN(n)) return 0;
+  return Math.round(n * 100);
+}
+function isPositiveNumber(v) {
+  if (v === undefined || v === null || v === '') return false;
+  const n = Number(String(v).replace(/,/g, ''));
+  return !isNaN(n) && n > 0;
+}
+
+// Bill Amount / Total Received / Outstanding / Excess / Payment Status /
+// Closure Eligibility are all calculated here — never stored — from the
+// job's current bill fields plus the authoritative sum of its fee_receipts.
+// `totalReceivedPaise` must come from a fresh SUM query, not client state.
+function computeBilling(job, totalReceivedPaise) {
+  const billRequired = job.bill_required || 'to_be_decided';
+  const billAmountPaise = toPaise(job.bill_amount);
+  let paymentStatus = 'to_be_decided';
+  let outstandingPaise = 0;
+  let excessPaise = 0;
+  let financiallyEligible = false;
+
+  if (billRequired === 'no') {
+    paymentStatus = 'not_required';
+    financiallyEligible = true;
+  } else if (billRequired === 'to_be_decided') {
+    paymentStatus = 'to_be_decided';
+    financiallyEligible = false;
+  } else {
+    if (!job.bill_date || billAmountPaise <= 0) {
+      paymentStatus = 'bill_pending';
+    } else if (totalReceivedPaise === 0) {
+      paymentStatus = 'unpaid';
+      outstandingPaise = billAmountPaise;
+    } else if (totalReceivedPaise < billAmountPaise) {
+      paymentStatus = 'part_payment';
+      outstandingPaise = billAmountPaise - totalReceivedPaise;
+    } else if (totalReceivedPaise === billAmountPaise) {
+      paymentStatus = 'fully_paid';
+      financiallyEligible = true;
+    } else {
+      paymentStatus = 'excess_received';
+      excessPaise = totalReceivedPaise - billAmountPaise;
+      financiallyEligible = true;
+    }
+  }
+
+  const closureEligible = financiallyEligible && job.fsr_submitted === 'yes';
+  return { billRequired, billAmountPaise, totalReceivedPaise, outstandingPaise, excessPaise, paymentStatus, closureEligible };
+}
+
+async function sumFeeReceipts(db, jobId) {
+  const { results } = await db.prepare('SELECT amount FROM fee_receipts WHERE job_id = ?').bind(jobId).all();
+  return results.reduce((sum, r) => sum + toPaise(r.amount), 0);
+}
+
+// Billing fields live in the `job_billing` sidecar table (1:1 with jobs),
+// not as jobs columns — see BILLING_FIELDS comment. This merges a fresh
+// job_billing row (if any) onto a plain jobs row, defaulting every billing
+// field for jobs that don't have a job_billing row yet (i.e. every job
+// created/edited before its first billing write).
+const JOB_BILLING_DEFAULTS = {
+  bill_required: 'to_be_decided', bill_date: '', bill_number: '', bill_amount: '',
+  billing_remarks: '', closure_date: '', closed_by: '', closure_remarks: '',
+};
+function mergeJobBilling(job, billingRow) {
+  return { ...job, ...JOB_BILLING_DEFAULTS, ...(billingRow || {}) };
+}
+async function getJobWithBilling(db, jobId) {
+  const job = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) return null;
+  const billingRow = await db.prepare('SELECT * FROM job_billing WHERE job_id = ?').bind(jobId).first();
+  return mergeJobBilling(job, billingRow);
+}
+async function upsertJobBilling(db, jobId, fields) {
+  const cols = Object.keys(fields);
+  if (cols.length === 0) return;
+  const now = Date.now();
+  await db.prepare(
+    `INSERT INTO job_billing (job_id, ${cols.join(', ')}, updated_at)
+     VALUES (?, ${cols.map(() => '?').join(', ')}, ?)
+     ON CONFLICT(job_id) DO UPDATE SET
+       ${cols.map(c => `${c} = excluded.${c}`).join(', ')}, updated_at = excluded.updated_at`
+  ).bind(jobId, ...cols.map(c => fields[c]), now).run();
+}
+
 // Cross-field milestone rules (V0.9). `body` may be a partial PATCH, so each
 // check falls back to the existing row's value for fields not being changed.
 async function requireDirectorStaff(db, staffId, label) {
@@ -225,6 +325,45 @@ async function validateFinalReport(db, existing, body) {
   }
 }
 
+// Bill Required = Yes only demands Date + a positive Amount once the bill
+// is actually being entered (either field non-blank in the effective
+// state) — "Yes, not generated yet" (both blank) stays valid.
+function validateBilling(existing, body) {
+  const eff = field => (body[field] !== undefined ? body[field] : existing[field]);
+  const required = eff('bill_required');
+  const date = eff('bill_date');
+  const amount = eff('bill_amount');
+
+  if (required === 'yes' && (date || amount)) {
+    if (!date) throw new Error('Bill Date is required once the bill is generated');
+    if (!isPositiveNumber(amount)) throw new Error('Bill Amount must be a positive number once the bill is generated');
+  } else if (amount && !isNonNegativeNumber(amount)) {
+    throw new Error('Bill Amount must be a non-negative number');
+  }
+}
+
+const PAYMENT_STATUS_LABELS = {
+  to_be_decided: 'Billing Requirement To Be Decided', not_required: 'Bill Not Required',
+  bill_pending: 'Bill Pending', unpaid: 'Unpaid', part_payment: 'Part Payment',
+  fully_paid: 'Fully Paid', excess_received: 'Excess Received',
+};
+
+// Logs only the transitions that actually change the *computed* payment
+// status or closure eligibility — never fires on a no-op recalculation.
+async function logBillingTransition(db, jobId, before, after, actor) {
+  const entries = [];
+  if (before.paymentStatus !== after.paymentStatus) {
+    entries.push({ text: `Payment status became ${PAYMENT_STATUS_LABELS[after.paymentStatus] || after.paymentStatus}.`, ts: Date.now(), actor });
+  }
+  if (before.closureEligible !== after.closureEligible) {
+    entries.push({
+      text: after.closureEligible ? 'Claim became eligible for closure.' : 'Claim is no longer eligible for closure.',
+      ts: Date.now(), actor,
+    });
+  }
+  if (entries.length > 0) await appendJobActivity(db, jobId, entries);
+}
+
 async function listJobs(db) {
   const { results } = await db.prepare('SELECT * FROM jobs ORDER BY updated_at DESC').all();
   const { results: visits } = await db.prepare(
@@ -239,6 +378,15 @@ async function listJobs(db) {
   const { results: queries } = await db.prepare(
     'SELECT job_id, status FROM claim_queries'
   ).all();
+  const { results: feeReceipts } = await db.prepare(
+    'SELECT job_id, amount FROM fee_receipts'
+  ).all();
+  const { results: billingRows } = await db.prepare('SELECT * FROM job_billing').all();
+
+  const receivedPaiseByJob = {};
+  for (const r of feeReceipts) receivedPaiseByJob[r.job_id] = (receivedPaiseByJob[r.job_id] || 0) + toPaise(r.amount);
+  const billingByJob = {};
+  for (const b of billingRows) billingByJob[b.job_id] = b;
 
   const byJob = {};
   for (const v of visits) (byJob[v.job_id] ||= []).push(v);
@@ -250,7 +398,7 @@ async function listJobs(db) {
   for (const q of queries) if (q.status === 'open') openQueryCountByJob[q.job_id] = (openQueryCountByJob[q.job_id] || 0) + 1;
 
   return results.map(row => {
-    const job = rowToJob(row);
+    const job = mergeJobBilling(rowToJob(row), billingByJob[row.id]);
     const jobVisits = byJob[job.id] || [];
     job.survey_visit_count = jobVisits.length;
     const last = jobVisits[jobVisits.length - 1];
@@ -263,6 +411,17 @@ async function listJobs(db) {
 
     job.document_receipt_count = recCountByJob[job.id] || 0;
     job.open_query_count = openQueryCountByJob[job.id] || 0;
+
+    const receivedPaise = receivedPaiseByJob[job.id] || 0;
+    const billing = computeBilling(job, receivedPaise);
+    job.billing = {
+      bill_amount_paise: billing.billAmountPaise,
+      total_received_paise: billing.totalReceivedPaise,
+      outstanding_paise: billing.outstandingPaise,
+      excess_paise: billing.excessPaise,
+      payment_status: billing.paymentStatus,
+      closure_eligible: billing.closureEligible,
+    };
     return job;
   });
 }
@@ -326,15 +485,29 @@ async function createJob(db, body) {
   return rowToJob(job);
 }
 
-async function updateJob(db, id, body) {
-  const existing = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
-  if (!existing) throw new Error('job not found');
+async function updateJob(db, id, body, user) {
+  const existingRow = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
+  if (!existingRow) throw new Error('job not found');
+  const existingBillingRow = await db.prepare('SELECT * FROM job_billing WHERE job_id = ?').bind(id).first();
+  const existing = mergeJobBilling(existingRow, existingBillingRow);
   const effectiveFrom = body.policy_period_from !== undefined ? body.policy_period_from : existing.policy_period_from;
   const effectiveTo   = body.policy_period_to   !== undefined ? body.policy_period_to   : existing.policy_period_to;
   validatePolicyPeriod(effectiveFrom, effectiveTo);
   await validateJobAssignments(db, body);
   await validateMilestones(db, existing, body);
   await validateFinalReport(db, existing, body);
+  validateBilling(existing, body);
+
+  // Billing fields affect the *calculated* payment status/closure eligibility
+  // — capture the before-state so we can log only a real transition, not
+  // every recalculation.
+  const billingChanged = BILLING_FIELDS.some(f => body[f] !== undefined && body[f] !== existing[f]);
+  let receivedPaiseForLog = 0;
+  let beforeBilling = null;
+  if (billingChanged) {
+    receivedPaiseForLog = await sumFeeReceipts(db, id);
+    beforeBilling = computeBilling(existing, receivedPaiseForLog);
+  }
 
   const sets = [];
   const values = [];
@@ -349,7 +522,7 @@ async function updateJob(db, id, body) {
   }
 
   let activity = [];
-  try { activity = JSON.parse(existing.activity); } catch { activity = []; }
+  try { activity = JSON.parse(existingRow.activity); } catch { activity = []; }
   if (Array.isArray(body.activity_add)) activity.push(...body.activity_add);
   sets.push('activity = ?');
   values.push(JSON.stringify(activity));
@@ -361,7 +534,19 @@ async function updateJob(db, id, body) {
   values.push(id);
   await db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
 
-  const updated = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
+  const billingFieldsToWrite = {};
+  for (const f of BILLING_FIELDS) if (body[f] !== undefined) billingFieldsToWrite[f] = body[f];
+  if (Object.keys(billingFieldsToWrite).length > 0) {
+    await upsertJobBilling(db, id, billingFieldsToWrite);
+  }
+
+  const updated = await getJobWithBilling(db, id);
+
+  if (billingChanged && user) {
+    const afterBilling = computeBilling(updated, receivedPaiseForLog);
+    await logBillingTransition(db, id, beforeBilling, afterBilling, user.id);
+  }
+
   return rowToJob(updated);
 }
 
@@ -729,6 +914,134 @@ async function updateQuery(db, jobId, queryId, body, user) {
   }
 
   return db.prepare('SELECT * FROM claim_queries WHERE id = ?').bind(queryId).first();
+}
+
+// ── FEE RECEIPTS (V1.1) ──────────────────────────────────────────
+async function listFeeReceipts(db, jobId) {
+  const { results } = await db.prepare(
+    'SELECT * FROM fee_receipts WHERE job_id = ? ORDER BY created_at ASC'
+  ).bind(jobId).all();
+  return results;
+}
+
+async function createFeeReceipt(db, jobId, body, user) {
+  const job = await getJobWithBilling(db, jobId);
+  if (!job) throw new Error('job not found');
+
+  const receiptDate = (body.receipt_date || '').trim();
+  const amount = (body.amount || '').toString().trim();
+  const receiptMode = (body.receipt_mode || '').trim();
+  const referenceNo = (body.reference_no || '').trim();
+  const remarks = (body.remarks || '').trim();
+
+  if (!EVENT_DATE_RE.test(receiptDate)) throw new Error('A valid receipt date (YYYY-MM-DD) is required');
+  if (!isPositiveNumber(amount)) throw new Error('Amount Received must be a positive number');
+
+  const beforePaise = await sumFeeReceipts(db, jobId);
+  const before = computeBilling(job, beforePaise);
+
+  const now = Date.now();
+  const id = `FR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO fee_receipts (id, job_id, receipt_date, amount, receipt_mode, reference_no, remarks, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, receiptDate, amount, receiptMode, referenceNo, remarks, user.id, now, now).run();
+
+  const afterPaise = beforePaise + toPaise(amount);
+  const after = computeBilling(job, afterPaise);
+
+  const amountLabel = (toPaise(amount) / 100).toLocaleString('en-IN');
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} added fee receipt — ₹${amountLabel}${receiptMode ? ' — ' + receiptMode : ''} — ${receiptDate}.`,
+    ts: now, actor: user.id,
+  }]);
+  await logBillingTransition(db, jobId, before, after, user.id);
+
+  return { id, job_id: jobId, receipt_date: receiptDate, amount, receipt_mode: receiptMode,
+    reference_no: referenceNo, remarks, created_by: user.id, created_at: now, updated_at: now };
+}
+
+async function updateFeeReceipt(db, jobId, receiptId, body, user) {
+  const job = await getJobWithBilling(db, jobId);
+  if (!job) throw new Error('job not found');
+  const existing = await db.prepare('SELECT * FROM fee_receipts WHERE id = ? AND job_id = ?')
+    .bind(receiptId, jobId).first();
+  if (!existing) throw new Error('fee receipt not found');
+
+  const next = {
+    receipt_date: body.receipt_date !== undefined ? String(body.receipt_date).trim() : existing.receipt_date,
+    amount: body.amount !== undefined ? String(body.amount).trim() : existing.amount,
+    receipt_mode: body.receipt_mode !== undefined ? String(body.receipt_mode).trim() : existing.receipt_mode,
+    reference_no: body.reference_no !== undefined ? String(body.reference_no).trim() : existing.reference_no,
+    remarks: body.remarks !== undefined ? String(body.remarks).trim() : existing.remarks,
+  };
+  if (!EVENT_DATE_RE.test(next.receipt_date)) throw new Error('A valid receipt date (YYYY-MM-DD) is required');
+  if (!isPositiveNumber(next.amount)) throw new Error('Amount Received must be a positive number');
+
+  const beforePaise = await sumFeeReceipts(db, jobId);
+  const before = computeBilling(job, beforePaise);
+
+  const changeLines = [];
+  if (next.amount !== existing.amount) changeLines.push(`amount from ₹${(toPaise(existing.amount)/100).toLocaleString('en-IN')} to ₹${(toPaise(next.amount)/100).toLocaleString('en-IN')}`);
+  if (next.receipt_date !== existing.receipt_date) changeLines.push(`date from ${existing.receipt_date} to ${next.receipt_date}`);
+  if (next.receipt_mode !== (existing.receipt_mode || '')) changeLines.push(`mode from "${existing.receipt_mode || '—'}" to "${next.receipt_mode || '—'}"`);
+  if (next.reference_no !== (existing.reference_no || '')) changeLines.push('reference number');
+  if (next.remarks !== (existing.remarks || '')) changeLines.push('remarks');
+
+  const now = Date.now();
+  await db.prepare(`
+    UPDATE fee_receipts SET receipt_date=?, amount=?, receipt_mode=?, reference_no=?, remarks=?, updated_at=?
+    WHERE id = ?
+  `).bind(next.receipt_date, next.amount, next.receipt_mode, next.reference_no, next.remarks, now, receiptId).run();
+
+  if (changeLines.length > 0) {
+    await appendJobActivity(db, jobId, [{ text: `${user.id} updated fee receipt ${changeLines.join('; ')}.`, ts: now, actor: user.id }]);
+  }
+
+  const afterPaise = beforePaise - toPaise(existing.amount) + toPaise(next.amount);
+  const after = computeBilling(job, afterPaise);
+  await logBillingTransition(db, jobId, before, after, user.id);
+
+  return db.prepare('SELECT * FROM fee_receipts WHERE id = ?').bind(receiptId).first();
+}
+
+// ── CLOSE JOB (V1.1) ─────────────────────────────────────────────
+// Deliberately its own action, not a generic stage PATCH: eligibility and
+// authorization are recomputed here from authoritative DB state, never
+// trusting a client-supplied "eligible" flag.
+function isDirectorRole(user) {
+  return !!user && /director/i.test(user.role || '');
+}
+
+async function closeJob(db, jobId, body, user) {
+  if (!isAdmin(user) && !isDirectorRole(user)) {
+    throw new Error('Only an Admin or Director may close a claim');
+  }
+
+  const job = await getJobWithBilling(db, jobId);
+  if (!job) throw new Error('job not found');
+  if (job.stage === 'closed') throw new Error('This claim is already closed');
+
+  const receivedPaise = await sumFeeReceipts(db, jobId);
+  const billing = computeBilling(job, receivedPaise);
+  if (!billing.closureEligible) {
+    throw new Error('This claim is not currently eligible for closure');
+  }
+
+  const closureDate = (body.closure_date || '').trim();
+  if (!EVENT_DATE_RE.test(closureDate)) throw new Error('A valid closure date (YYYY-MM-DD) is required');
+  const closureRemarks = (body.closure_remarks || '').trim();
+
+  const now = Date.now();
+  await db.prepare(`UPDATE jobs SET stage = 'closed', updated_at = ? WHERE id = ?`).bind(now, jobId).run();
+  await upsertJobBilling(db, jobId, { closure_date: closureDate, closed_by: user.id, closure_remarks: closureRemarks });
+
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} closed the claim on ${closureDate}.`, ts: now, actor: user.id,
+  }]);
+
+  const updated = await getJobWithBilling(db, jobId);
+  return rowToJob(updated);
 }
 
 async function getSetting(db, key) {
@@ -1204,12 +1517,37 @@ export default {
           const body = await request.json();
           return json(await updateQuery(db, jobId, queryId, body, user));
         }
+
+        const feeReceiptCollectionMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/fee-receipts\/?$/);
+        if (feeReceiptCollectionMatch) {
+          const jobId = decodeURIComponent(feeReceiptCollectionMatch[1]);
+          if (request.method === 'GET') return json(await listFeeReceipts(db, jobId));
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await createFeeReceipt(db, jobId, body, user), 201);
+          }
+        }
+
+        const feeReceiptItemMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/fee-receipts\/([^/]+)$/);
+        if (feeReceiptItemMatch && request.method === 'PATCH') {
+          const jobId = decodeURIComponent(feeReceiptItemMatch[1]);
+          const receiptId = decodeURIComponent(feeReceiptItemMatch[2]);
+          const body = await request.json();
+          return json(await updateFeeReceipt(db, jobId, receiptId, body, user));
+        }
+
+        const closeMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/close\/?$/);
+        if (closeMatch && request.method === 'POST') {
+          const jobId = decodeURIComponent(closeMatch[1]);
+          const body = await request.json();
+          return json(await closeJob(db, jobId, body, user));
+        }
       }
 
       if (pathname.startsWith('/api/jobs/') && request.method === 'PATCH') {
         const id = decodeURIComponent(pathname.slice('/api/jobs/'.length));
         const body = await request.json();
-        return json(await updateJob(db, id, body));
+        return json(await updateJob(db, id, body, user));
       }
 
       if (pathname === '/api/log' && request.method === 'GET') {

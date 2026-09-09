@@ -932,6 +932,99 @@ details.sp-section[open] summary{margin-bottom:0}
   </div>
 </div>
 
+<!-- ── FEE RECEIPT HISTORY MODAL ── -->
+<div class="modal-overlay" id="feeReceiptHistoryModal" hidden onclick="e=>e.target===this&&closeFeeReceiptHistory()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Fee Receipts — <span id="frh-job-id" class="mono" style="font-size:14px"></span></h2>
+      <button class="sp-close" onclick="closeFeeReceiptHistory()">✕</button>
+    </div>
+    <div class="modal-body">
+      <button type="button" class="btn-add-contact" onclick="openFeeReceiptForm()">+ Add Fee Receipt</button>
+      <div id="feeReceiptList"></div>
+      <div id="feeReceiptTotal" style="text-align:right;font-weight:600;font-size:13px;margin-top:8px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeFeeReceiptHistory()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD/EDIT FEE RECEIPT MODAL ── -->
+<div class="modal-overlay" id="feeReceiptFormModal" hidden onclick="e=>e.target===this&&closeFeeReceiptForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="frf-modal-title">Add Fee Receipt</h2>
+      <button class="sp-close" onclick="closeFeeReceiptForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field">
+          <label>Receipt Date *</label>
+          <input id="frf-date" type="date">
+        </div>
+        <div class="form-field">
+          <label>Amount Received (₹) *</label>
+          <input id="frf-amount" inputmode="decimal">
+        </div>
+        <div class="form-field">
+          <label>Receipt Mode</label>
+          <select id="frf-mode">
+            <option value="NEFT / RTGS">NEFT / RTGS</option>
+            <option value="UPI">UPI</option>
+            <option value="Cheque">Cheque</option>
+            <option value="Cash">Cash</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+            <option value="Adjustment">Adjustment</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Reference / UTR / Cheque No.</label>
+          <input id="frf-reference" class="mono">
+        </div>
+        <div class="form-field full">
+          <label>Remarks</label>
+          <textarea id="frf-remarks" class="notes-area" rows="2"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitFeeReceiptForm()">Save Receipt</button>
+      <button class="btn-secondary" onclick="closeFeeReceiptForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CLOSE JOB MODAL ── -->
+<div class="modal-overlay" id="closeJobModal" hidden onclick="e=>e.target===this&&closeCloseJobModal()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>Close Job — <span id="cj-job-id" class="mono" style="font-size:14px"></span></h2>
+      <button class="sp-close" onclick="closeCloseJobModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full" style="font-size:13px;color:var(--text-sec);margin-bottom:4px">
+          This claim is financially and operationally eligible for closure. Closing it moves the pipeline stage to <strong>Closed</strong>. This action is significant — please confirm the details below.
+        </div>
+        <div class="form-field">
+          <label>Closure Date *</label>
+          <input id="cj-date" type="date">
+        </div>
+        <div class="form-field full">
+          <label>Closure Remarks</label>
+          <textarea id="cj-remarks" class="notes-area" rows="3"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" style="background:var(--red)" onclick="submitCloseJob()">Confirm Close Job</button>
+      <button class="btn-secondary" onclick="closeCloseJobModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // CONFIG — set your Worker URL after deploy
@@ -991,6 +1084,9 @@ let claimReceipts = [];
 let editingReceiptId = null;
 let claimQueries = [];
 let editingQueryId = null;
+let claimFeeReceipts = [];
+let editingFeeReceiptId = null;
+let closingJobId = null;
 let editingVisitId = null;
 
 const VISIT_REASONS = [
@@ -1377,6 +1473,7 @@ function openJob(id) {
   body.innerHTML = buildJobPanel(j);
   toggleInsurerApprovalFields();
   toggleHardCopyFields();
+  toggleBillFields();
 
   document.getElementById('overlay').classList.add('open');
   document.getElementById('sidePanel').classList.add('open');
@@ -1530,6 +1627,11 @@ function buildJobPanel(j) {
       <div><strong>Hard Copy</strong><br>${hardCopyLine(j)}</div>
       <div><strong>POD</strong><br>${podLine(j)}</div>
       <div><strong>Queries</strong><br>${j.open_query_count?`${j.open_query_count} Open`:'None Open'}</div>
+      <div><strong>Bill</strong><br>${j.bill_required==='no'?'Not Required':j.bill_required==='to_be_decided'?'To Be Decided':(j.billing?.bill_amount_paise?formatINR(j.billing.bill_amount_paise)+(j.bill_date?' — '+j.bill_date:''):'Pending')}</div>
+      <div><strong>Fee Received</strong><br>${formatINR(j.billing?.total_received_paise||0)}</div>
+      <div><strong>Outstanding</strong><br>${formatINR(j.billing?.outstanding_paise||0)}${j.billing?.excess_paise?` (Excess ${formatINR(j.billing.excess_paise)})`:''}</div>
+      <div><strong>Payment</strong><br><span style="color:${PAYMENT_STATUS_COLORS[j.billing?.payment_status]||'inherit'}">${PAYMENT_STATUS_LABELS[j.billing?.payment_status]||'—'}</span></div>
+      <div><strong>Closure</strong><br>${j.stage==='closed'?`Closed${j.closure_date?' — '+j.closure_date:''}`:(j.billing?.closure_eligible?'<span style="color:var(--green)">Eligible</span>':'Not Eligible')}</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
       <button type="button" class="btn-secondary" onclick="openSurveyHistory('${j.id}')">View Survey History</button>
@@ -1537,6 +1639,8 @@ function buildJobPanel(j) {
       <button type="button" class="btn-secondary" onclick="openReminderHistory('${j.id}')">View Reminder History</button>
       <button type="button" class="btn-secondary" onclick="openReceiptHistory('${j.id}')">View Document Receipt History</button>
       <button type="button" class="btn-secondary" onclick="openQueryHistory('${j.id}')">View Query History</button>
+      <button type="button" class="btn-secondary" onclick="openFeeReceiptHistory('${j.id}')">View Fee Receipts</button>
+      ${j.stage!=='closed' && j.billing?.closure_eligible && canCloseJobs() ? `<button type="button" class="btn-primary" style="flex:none" onclick="openCloseJobModal('${j.id}')">Close Job</button>` : ''}
     </div>
   </div>
 
@@ -1788,6 +1892,55 @@ function buildJobPanel(j) {
     </div>
   </details>
 
+  <!-- Billing & Closure -->
+  <details class="sp-section">
+    <summary class="sp-section-label" style="cursor:pointer">Billing &amp; Closure</summary>
+    <div class="sp-grid" style="margin-top:10px">
+      <div class="modal-subsection-label">Bill Details</div>
+      <div class="sp-field"><label>Bill Required?</label>
+        <select id="sp-f-bill-required" onchange="toggleBillFields()">
+          <option value="to_be_decided" ${j.bill_required==='to_be_decided'?'selected':''}>To Be Decided</option>
+          <option value="yes" ${j.bill_required==='yes'?'selected':''}>Yes</option>
+          <option value="no" ${j.bill_required==='no'?'selected':''}>No / Not Required</option>
+        </select>
+      </div>
+      <div class="sp-field-full" id="sp-bill-not-required-note" style="font-size:12px;color:var(--text-faint)">
+        ${j.bill_required==='no' ? 'Bill: Not Required.' : j.bill_required==='to_be_decided' ? 'Billing Requirement: To Be Decided.' : ''}
+      </div>
+      <div class="sp-field" id="sp-bill-date-wrap"><label>Bill Date</label><input type="date" id="sp-f-bill-date" value="${j.bill_date||''}"></div>
+      <div class="sp-field" id="sp-bill-number-wrap"><label>Bill Number</label><input id="sp-f-bill-number" value="${esc(j.bill_number||'')}"></div>
+      <div class="sp-field" id="sp-bill-amount-wrap"><label>Bill Amount (₹)</label><input id="sp-f-bill-amount" inputmode="decimal" value="${esc(j.bill_amount||'')}"></div>
+      <div class="sp-field sp-field-full" id="sp-bill-remarks-wrap"><label>Billing Remarks</label><input id="sp-f-billing-remarks" value="${esc(j.billing_remarks||'')}"></div>
+
+      <div class="modal-subsection-label">Payment Summary (calculated)</div>
+      <div class="progress-grid" style="grid-column:1/-1">
+        <div><strong>Bill Amount</strong><br>${formatINR(j.billing?.bill_amount_paise||0)}</div>
+        <div><strong>Total Received</strong><br>${formatINR(j.billing?.total_received_paise||0)}</div>
+        <div><strong>Outstanding</strong><br>${formatINR(j.billing?.outstanding_paise||0)}</div>
+        <div><strong>Excess</strong><br>${formatINR(j.billing?.excess_paise||0)}</div>
+        <div><strong>Payment Status</strong><br><span style="color:${PAYMENT_STATUS_COLORS[j.billing?.payment_status]||'inherit'}">${PAYMENT_STATUS_LABELS[j.billing?.payment_status]||'—'}</span></div>
+        <div><strong>Closure Eligibility</strong><br>${j.stage==='closed'?'Closed':(j.billing?.closure_eligible?'<span style="color:var(--green)">Eligible</span>':'Not Eligible')}</div>
+      </div>
+      <div class="sp-field-full">
+        <button type="button" class="btn-secondary" onclick="openFeeReceiptHistory('${j.id}')">View Fee Receipts</button>
+      </div>
+
+      <div class="modal-subsection-label">Closure</div>
+      ${j.stage==='closed' ? `
+        <div class="sp-field-full" style="font-size:13px">
+          <strong>Closed</strong> — ${j.closure_date||''} by ${esc(teamMember(j.closed_by)?.name || j.closed_by || '—')}
+          ${j.closure_remarks ? `<div style="color:var(--text-sec);margin-top:4px">${esc(j.closure_remarks)}</div>` : ''}
+        </div>
+      ` : `
+        <div class="sp-field-full" style="font-size:12px;color:var(--text-faint)">
+          ${j.billing?.closure_eligible ? 'This claim is eligible for closure.' : 'This claim is not yet eligible for closure.'}
+          ${!canCloseJobs() ? ' Only an Admin or Director can close a claim.' : ''}
+        </div>
+        ${j.billing?.closure_eligible && canCloseJobs() ? `<div class="sp-field-full"><button type="button" class="btn-primary" onclick="openCloseJobModal('${j.id}')">Close Job</button></div>` : ''}
+      `}
+    </div>
+  </details>
+
   <!-- Documents -->
   <div class="sp-section">
     <div class="sp-section-label">Document Checklist</div>
@@ -1977,6 +2130,15 @@ async function saveJob() {
     alert('POD Date is required when POD Status is Delivered.'); return;
   }
 
+  // ── Billing (V1.1) — Bill Required=Yes only demands date+positive amount
+  // once the bill is actually being entered (either field non-blank).
+  if (gv('sp-f-bill-required') === 'yes' && (gv('sp-f-bill-date') || gv('sp-f-bill-amount'))) {
+    if (!gv('sp-f-bill-date')) { alert('Bill Date is required once the bill is generated.'); return; }
+    if (!isPositiveAmount(gv('sp-f-bill-amount'))) { alert('Bill Amount must be a positive number once the bill is generated.'); return; }
+  } else if (gv('sp-f-bill-amount') && !isPositiveAmount(gv('sp-f-bill-amount')) && Number(gv('sp-f-bill-amount').replace(/,/g,'')) < 0) {
+    alert('Bill Amount must be a non-negative number.'); return;
+  }
+
   const MILESTONE_FIELD_MAP = [
     ['sp-f-ila-required', 'ila_required', 'ILA Required', REQUIRED_LABELS],
     ['sp-f-ila-issued', 'ila_issued', 'ILA Issued', {yes:'Yes',no:'No'}],
@@ -2026,6 +2188,11 @@ async function saveJob() {
     ['sp-f-pod-status', 'pod_status', 'POD Status', POD_STATUS_LABELS],
     ['sp-f-pod-date', 'pod_date', 'POD Date'],
     ['sp-f-pod-remarks', 'pod_remarks', 'POD Remarks'],
+    ['sp-f-bill-required', 'bill_required', 'Bill Required', REQUIRED_LABELS],
+    ['sp-f-bill-date', 'bill_date', 'Bill Date'],
+    ['sp-f-bill-number', 'bill_number', 'Bill Number'],
+    ['sp-f-bill-amount', 'bill_amount', 'Bill Amount'],
+    ['sp-f-billing-remarks', 'billing_remarks', 'Billing Remarks'],
   ];
   for (const [domId, key, label, valueLabels] of MILESTONE_FIELD_MAP) {
     const el = document.getElementById(domId);
@@ -2056,6 +2223,13 @@ async function saveJob() {
     } else if (key === 'pod_status' && val === 'delivered') {
       const podDate = gv('sp-f-pod-date') || j.pod_date;
       actEntries.push({ text: `POD marked Delivered${podDate ? ' on ' + podDate : ''}.`, ts: Date.now(), actor });
+    } else if (key === 'bill_amount' && val) {
+      if (!oldVal) {
+        const billNo = gv('sp-f-bill-number');
+        actEntries.push({ text: `Bill generated — ${formatINR(toPaise(val))}${billNo ? ' — Bill No. ' + billNo : ''}.`, ts: Date.now(), actor });
+      } else {
+        actEntries.push({ text: `Bill amount changed from ${formatINR(toPaise(oldVal))} to ${formatINR(toPaise(val))}.`, ts: Date.now(), actor });
+      }
     } else {
       actEntries.push({ text: `${who} changed ${label} from ${disp(oldVal)} to ${disp(val)}.`, ts: Date.now(), actor });
     }
@@ -2595,6 +2769,91 @@ function toggleHardCopyFields() {
   }
 }
 
+// ── BILLING & CLOSURE (V1.1) ──────────────────────────────────
+// Mirrors worker.js's computeBilling() exactly — all money math happens in
+// integer paise to avoid floating-point drift; display formatting only
+// happens at the edges via formatINR().
+function toPaise(v) {
+  if (!v) return 0;
+  const n = parseFloat(String(v).replace(/,/g, ''));
+  if (isNaN(n)) return 0;
+  return Math.round(n * 100);
+}
+function isPositiveAmount(v) {
+  if (v === undefined || v === null || v === '') return false;
+  const n = Number(String(v).replace(/,/g, ''));
+  return !isNaN(n) && n > 0;
+}
+function formatINR(paise) {
+  return '₹' + (Math.round(paise) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+const PAYMENT_STATUS_LABELS = {
+  to_be_decided: 'Billing Requirement To Be Decided', not_required: 'Bill Not Required',
+  bill_pending: 'Bill Pending', unpaid: 'Unpaid', part_payment: 'Part Payment',
+  fully_paid: 'Fully Paid', excess_received: 'Excess Received',
+};
+const PAYMENT_STATUS_COLORS = {
+  to_be_decided: 'var(--text-faint)', not_required: 'var(--text-faint)', bill_pending: 'var(--text-faint)',
+  unpaid: 'var(--red)', part_payment: 'var(--amber)', fully_paid: 'var(--green)', excess_received: 'var(--green)',
+};
+const FEE_RECEIPT_MODES = ['NEFT / RTGS', 'UPI', 'Cheque', 'Cash', 'Bank Transfer', 'Adjustment', 'Other'];
+
+function computeBilling(job, totalReceivedPaise) {
+  const billRequired = job.bill_required || 'to_be_decided';
+  const billAmountPaise = toPaise(job.bill_amount);
+  let paymentStatus = 'to_be_decided';
+  let outstandingPaise = 0;
+  let excessPaise = 0;
+  let financiallyEligible = false;
+
+  if (billRequired === 'no') {
+    paymentStatus = 'not_required';
+    financiallyEligible = true;
+  } else if (billRequired === 'to_be_decided') {
+    paymentStatus = 'to_be_decided';
+  } else {
+    if (!job.bill_date || billAmountPaise <= 0) {
+      paymentStatus = 'bill_pending';
+    } else if (totalReceivedPaise === 0) {
+      paymentStatus = 'unpaid';
+      outstandingPaise = billAmountPaise;
+    } else if (totalReceivedPaise < billAmountPaise) {
+      paymentStatus = 'part_payment';
+      outstandingPaise = billAmountPaise - totalReceivedPaise;
+    } else if (totalReceivedPaise === billAmountPaise) {
+      paymentStatus = 'fully_paid';
+      financiallyEligible = true;
+    } else {
+      paymentStatus = 'excess_received';
+      excessPaise = totalReceivedPaise - billAmountPaise;
+      financiallyEligible = true;
+    }
+  }
+
+  const closureEligible = financiallyEligible && job.fsr_submitted === 'yes';
+  return { billRequired, billAmountPaise, totalReceivedPaise, outstandingPaise, excessPaise, paymentStatus, closureEligible };
+}
+
+function canCloseJobs() {
+  return isAdminUser() || (currentUserRecord && /director/i.test(currentUserRecord.role || ''));
+}
+
+function toggleBillFields() {
+  const required = document.getElementById('sp-f-bill-required').value;
+  const show = required === 'yes';
+  ['sp-bill-date-wrap', 'sp-bill-number-wrap', 'sp-bill-amount-wrap', 'sp-bill-remarks-wrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? '' : 'none';
+  });
+  const note = document.getElementById('sp-bill-not-required-note');
+  if (note) {
+    note.style.display = show ? 'none' : '';
+    note.textContent = required === 'no' ? 'Bill: Not Required.'
+      : required === 'to_be_decided' ? 'Billing Requirement: To Be Decided.' : '';
+  }
+}
+
 // Inspecting-staff names are hidden from non-admins when the admin has
 // set Inspection Staff Visibility to Hidden. The server already strips
 // inspected_by_ids from the API response in that case (enforced there,
@@ -2941,6 +3200,109 @@ async function submitQueryForm() {
     fetchAll();
   } catch(e) {
     alert('Error saving query: ' + e.message);
+  }
+}
+
+// ── FEE RECEIPTS (V1.1) ───────────────────────────────────────
+async function openFeeReceiptHistory(jobId) {
+  currentSurveyJobId = jobId;
+  document.getElementById('frh-job-id').textContent = jobId;
+  document.getElementById('feeReceiptHistoryModal').hidden = false;
+  document.getElementById('feeReceiptList').innerHTML = '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">Loading…</div>';
+  document.getElementById('feeReceiptTotal').textContent = '';
+  try {
+    claimFeeReceipts = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/fee-receipts');
+  } catch(e) {
+    claimFeeReceipts = [];
+  }
+  renderFeeReceiptList();
+}
+function closeFeeReceiptHistory() { document.getElementById('feeReceiptHistoryModal').hidden = true; }
+
+function renderFeeReceiptList() {
+  document.getElementById('feeReceiptList').innerHTML = claimFeeReceipts.length === 0
+    ? '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">No fee receipts recorded yet.</div>'
+    : [...claimFeeReceipts].reverse().map(r => `
+      <div class="act-row" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px" onclick="openFeeReceiptForm('${r.id}')" title="Click to edit">
+        <div style="display:flex;justify-content:space-between;gap:10px;font-weight:600;font-size:13px">
+          <span>${formatINR(toPaise(r.amount))}${r.receipt_mode?' — '+esc(r.receipt_mode):''}</span>
+          <span class="mono" style="color:var(--text-faint);font-weight:400;font-size:11px">${r.receipt_date}</span>
+        </div>
+        ${r.reference_no ? `<div style="font-size:12px;color:var(--text-sec)" class="mono">Ref: ${esc(r.reference_no)}</div>` : ''}
+        ${r.remarks ? `<div style="font-size:12px;color:var(--text-faint)">${esc(r.remarks)}</div>` : ''}
+      </div>`).join('');
+
+  const totalPaise = claimFeeReceipts.reduce((sum, r) => sum + toPaise(r.amount), 0);
+  document.getElementById('feeReceiptTotal').textContent = claimFeeReceipts.length ? `Total: ${formatINR(totalPaise)}` : '';
+}
+
+function openFeeReceiptForm(receiptId) {
+  editingFeeReceiptId = receiptId || null;
+  const r = receiptId ? claimFeeReceipts.find(x => x.id === receiptId) : null;
+  document.getElementById('frf-modal-title').textContent = r ? 'Edit Fee Receipt' : 'Add Fee Receipt';
+  document.getElementById('frf-date').value = r ? r.receipt_date : '';
+  document.getElementById('frf-amount').value = r ? r.amount : '';
+  document.getElementById('frf-mode').value = r ? (r.receipt_mode || 'NEFT / RTGS') : 'NEFT / RTGS';
+  document.getElementById('frf-reference').value = r ? (r.reference_no || '') : '';
+  document.getElementById('frf-remarks').value = r ? (r.remarks || '') : '';
+  document.getElementById('feeReceiptFormModal').hidden = false;
+}
+function closeFeeReceiptForm() { document.getElementById('feeReceiptFormModal').hidden = true; }
+
+async function submitFeeReceiptForm() {
+  const date = document.getElementById('frf-date').value;
+  if (!date) { alert('Receipt Date is required.'); return; }
+  const amount = document.getElementById('frf-amount').value.trim();
+  if (!isPositiveAmount(amount)) { alert('Amount Received must be a positive number.'); return; }
+
+  const body = {
+    receipt_date: date,
+    amount,
+    receipt_mode: document.getElementById('frf-mode').value,
+    reference_no: document.getElementById('frf-reference').value.trim(),
+    remarks: document.getElementById('frf-remarks').value.trim(),
+  };
+  try {
+    if (editingFeeReceiptId) {
+      await apiPatch('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/fee-receipts/' + encodeURIComponent(editingFeeReceiptId), body);
+    } else {
+      await apiPost('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/fee-receipts', body);
+    }
+    closeFeeReceiptForm();
+    claimFeeReceipts = await apiGet('/api/jobs/' + encodeURIComponent(currentSurveyJobId) + '/fee-receipts');
+    renderFeeReceiptList();
+    fetchAll();
+  } catch(e) {
+    alert('Error saving fee receipt: ' + e.message);
+  }
+}
+
+// ── CLOSE JOB (V1.1) ───────────────────────────────────────────
+function openCloseJobModal(jobId) {
+  closingJobId = jobId;
+  document.getElementById('cj-job-id').textContent = jobId;
+  document.getElementById('cj-date').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('cj-remarks').value = '';
+  document.getElementById('closeJobModal').hidden = false;
+}
+function closeCloseJobModal() { document.getElementById('closeJobModal').hidden = true; }
+
+async function submitCloseJob() {
+  const date = document.getElementById('cj-date').value;
+  if (!date) { alert('Closure Date is required.'); return; }
+  if (!confirm('This will close the claim and move it out of the active pipeline. Continue?')) return;
+
+  try {
+    const updated = await apiPost('/api/jobs/' + encodeURIComponent(closingJobId) + '/close', {
+      closure_date: date,
+      closure_remarks: document.getElementById('cj-remarks').value.trim(),
+    });
+    jobs = jobs.map(jj => jj.id === closingJobId ? { ...jj, ...updated } : jj);
+    closeCloseJobModal();
+    if (openJobId === closingJobId) { closePanel(); }
+    renderAll();
+  } catch(e) {
+    alert('Error closing job: ' + e.message);
   }
 }
 </script>

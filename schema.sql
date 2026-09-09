@@ -244,3 +244,46 @@ CREATE TABLE IF NOT EXISTS claim_queries (
   FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_claim_queries_job ON claim_queries (job_id);
+
+-- ── Job Billing (V1.1) ───────────────────────────────────────
+-- 1:1 sidecar table, NOT more columns on jobs — jobs was already at 97
+-- columns and D1/SQLite enforces a ~100-column-per-table limit (confirmed
+-- via a failed ALTER TABLE during V1.1 development: "too many columns on
+-- sqlite_altertab_jobs"). Any future version needing more single-value
+-- job-level fields should add a new sidecar table like this one rather
+-- than more ALTER TABLE jobs ADD COLUMN — see HANDOFF_NOTES.md.
+-- Total received/outstanding/excess/payment status/closure eligibility are
+-- all CALCULATED from bill_amount + fee_receipts, never stored — see
+-- computeBilling() in worker.js and index.html.
+CREATE TABLE IF NOT EXISTS job_billing (
+  job_id          TEXT    PRIMARY KEY,
+  bill_required   TEXT    NOT NULL DEFAULT 'to_be_decided',  -- 'yes'|'no'|'to_be_decided'
+  bill_date       TEXT    DEFAULT '',
+  bill_number     TEXT    DEFAULT '',
+  bill_amount     TEXT    DEFAULT '',   -- rupees, e.g. "50000" or "50000.50"
+  billing_remarks TEXT    DEFAULT '',
+  closure_date    TEXT    DEFAULT '',   -- only ever set via POST /api/jobs/:id/close
+  closed_by       TEXT    DEFAULT '',   -- staff id, derived server-side from the authenticated user
+  closure_remarks TEXT    DEFAULT '',
+  updated_at      INTEGER NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+
+-- ── Fee Receipts (V1.1) ──────────────────────────────────────
+-- One job -> many fee receipts, unlimited. Total received/outstanding/
+-- excess/payment status are always calculated from these + job_billing.bill_amount,
+-- never stored.
+CREATE TABLE IF NOT EXISTS fee_receipts (
+  id            TEXT    PRIMARY KEY,
+  job_id        TEXT    NOT NULL,
+  receipt_date  TEXT    NOT NULL,
+  amount        TEXT    NOT NULL,   -- rupees, e.g. "20000" or "20000.50"
+  receipt_mode  TEXT    DEFAULT '',   -- 'NEFT / RTGS'|'UPI'|'Cheque'|'Cash'|'Bank Transfer'|'Adjustment'|'Other'
+  reference_no  TEXT    DEFAULT '',
+  remarks       TEXT    DEFAULT '',
+  created_by    TEXT    DEFAULT '',
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_fee_receipts_job ON fee_receipts (job_id);
