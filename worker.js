@@ -1953,6 +1953,453 @@ async function setDoNextPin(db, user, taskId) {
   return { ok: true, pinned_task_id: taskId };
 }
 
+// ── WORKFLOW INTELLIGENCE (V1.5) ────────────────────────────────────
+// Rule-based, deterministic, server-side, read-only. No AI/LLM calls. This
+// module only ever READS jobs/tasks/child-table data and derives a phase/
+// current-step/next-action/attention/health analysis — it never writes
+// jobs.stage, any milestone field, or creates/completes a task. Human
+// action (via the existing Job Detail form, Task Manager, or Close Job)
+// remains the only way anything actually changes. See HANDOFF_NOTES.md for
+// the full design rationale.
+//
+// The ordered TFAM claim sequence, grounded ONLY in fields that actually
+// exist and are checkable (per the instruction to use real milestone data
+// as the source of truth, not the conceptual step list verbatim — e.g.
+// "Upload Field Material" has no backing jobs column, so it is not modeled
+// as a distinct gating step; it's still a selectable task type). Each
+// entry's `applicable(job)` returns 'yes' (always/required), 'no' (this
+// claim explicitly doesn't need this step — skip silently), or
+// 'to_be_decided' (blocks progress AND is itself a workflow attention item
+// — never guessed as either yes or no).
+const WORKFLOW_STEPS = [
+  { id: 'appointment', phase: 'initial', label: 'Appointment', taskType: 'contact_fix_appointment',
+    applicable: () => 'yes', complete: j => !!j.appointment_confirmed,
+    nextAction: 'Contact insured and fix appointment' },
+  { id: 'inspection', phase: 'survey', label: 'Physical Inspection', taskType: 'physical_inspection',
+    applicable: () => 'yes', complete: j => j.survey_status === 'completed',
+    nextAction: 'Complete physical inspection' },
+  { id: 'ila', phase: 'preliminary_reporting', label: 'ILA', taskType: 'prepare_ila',
+    applicable: j => j.ila_required || 'to_be_decided', complete: j => j.ila_issued === 'yes',
+    nextAction: 'Issue ILA' },
+  { id: 'lor', phase: 'preliminary_reporting', label: 'LOR', taskType: 'prepare_lor',
+    applicable: j => j.lor_required || 'to_be_decided', complete: j => j.lor_issued === 'yes',
+    nextAction: 'Issue LOR' },
+  // No explicit "all documents received/verified" milestone field exists —
+  // per spec, we must not invent one. assessment_status leaving
+  // 'not_started' is the real, staff-driven signal that documents were
+  // sufficient to begin assessment; using anything else here would be a
+  // fabricated completion check.
+  { id: 'documents', phase: 'document_collection', label: 'Document Collection', taskType: 'call_pending_documents',
+    applicable: () => 'yes', complete: j => j.assessment_status !== 'not_started',
+    nextAction: 'Follow up pending documents' },
+  { id: 'assessment', phase: 'assessment', label: 'Assessment Preparation', taskType: 'assessment_preparation',
+    applicable: () => 'yes', complete: j => j.assessment_status === 'prepared',
+    nextAction: 'Prepare assessment' },
+  { id: 'director_verification', phase: 'assessment', label: 'Director Verification', taskType: 'assessment_director_approval',
+    applicable: () => 'yes', complete: j => j.director_verification_status === 'approved',
+    nextAction: 'Director to verify assessment' },
+  { id: 'insurer_approval', phase: 'assessment', label: 'Insurer Approval', taskType: 'insurer_approval',
+    applicable: j => j.insurer_approval_required || 'to_be_decided',
+    complete: j => ['approved', 'partially_approved'].includes(j.insurer_approval_status),
+    nextAction: 'Obtain insurer approval' },
+  { id: 'insured_consent', phase: 'assessment', label: 'Insured Consent', taskType: 'insured_approval',
+    applicable: () => 'yes', complete: j => j.insured_consent_status === 'accepted',
+    nextAction: 'Obtain insured consent' },
+  { id: 'fsr_preparation', phase: 'final_report', label: 'FSR Preparation', taskType: 'fsr_preparation',
+    applicable: () => 'yes', complete: j => j.fsr_preparation_status === 'ready',
+    nextAction: 'Prepare FSR' },
+  { id: 'fsr_final_verification', phase: 'final_report', label: 'FSR Final Verification', taskType: 'fsr_review',
+    applicable: () => 'yes', complete: j => j.fsr_final_verification_status === 'approved',
+    nextAction: 'Director to verify FSR' },
+  { id: 'fsr_submission', phase: 'final_report', label: 'FSR Submission', taskType: 'fsr_print_mail',
+    applicable: () => 'yes', complete: j => j.fsr_submitted === 'yes',
+    nextAction: 'Submit FSR' },
+  { id: 'dispatch', phase: 'dispatch_query', label: 'Hard Copy Dispatch', taskType: 'report_dispatch',
+    applicable: j => j.hard_copy_required || 'to_be_decided', complete: j => j.hard_copy_sent === 'yes',
+    nextAction: 'Dispatch hard copy' },
+  // Only reached once `dispatch` itself resolves (complete or skipped), so
+  // POD legitimately shares dispatch's own applicability — if hard copy
+  // isn't required, POD is never applicable either.
+  { id: 'pod', phase: 'dispatch_query', label: 'Proof of Delivery', taskType: 'courier_tracking',
+    applicable: j => j.hard_copy_required || 'to_be_decided',
+    complete: j => j.pod_status === 'delivered' || j.pod_status === 'not_applicable',
+    nextAction: 'Track POD' },
+];
+const PHASE_LABELS = {
+  initial: 'Initial / Appointment', survey: 'Survey', preliminary_reporting: 'Preliminary Reporting',
+  document_collection: 'Document Collection', assessment: 'Assessment', final_report: 'Final Report',
+  dispatch_query: 'Dispatch / Query', billing_closure: 'Billing / Closure', closed: 'Closed',
+};
+const STALL_THRESHOLDS_DAYS = { watch: 4, attention: 8, stalled: 15 };
+const REMINDER_FREQUENCY_DAYS = { none: null, daily: 1, every_3_days: 3, weekly: 7, fortnightly: 14, monthly: 30 };
+
+function daysSinceTs(ts, nowMs) {
+  if (!ts) return null;
+  return Math.floor((nowMs - ts) / 86400000);
+}
+function reminderDueIntervalDays(job) {
+  if (job.reminder_frequency === 'custom') {
+    const n = Number(job.reminder_frequency_custom_days);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return REMINDER_FREQUENCY_DAYS[job.reminder_frequency] ?? null;
+}
+
+// Walks the ordered step list once, classifying every step as
+// completed/skipped/pending and identifying the first pending (non-skipped,
+// non-to-be-decided-gate) step as `currentStep`. Continues through ALL
+// steps regardless (never short-circuits) so the full timeline can be
+// rendered, not just "what's blocking right now".
+function deriveWorkflowSteps(job) {
+  const completedSteps = [], skippedSteps = [], pendingSteps = [];
+  let currentStep = null, decisionNeeded = null;
+
+  for (const step of WORKFLOW_STEPS) {
+    const applicability = step.applicable(job);
+    if (applicability === 'no') { skippedSteps.push(step.id); continue; }
+    if (applicability === 'to_be_decided') {
+      if (!currentStep) { currentStep = step; decisionNeeded = step; }
+      pendingSteps.push(step.id);
+      continue;
+    }
+    if (step.complete(job)) {
+      completedSteps.push(step.id);
+    } else {
+      if (!currentStep) currentStep = step;
+      pendingSteps.push(step.id);
+    }
+  }
+  return { completedSteps, skippedSteps, pendingSteps, currentStep, decisionNeeded };
+}
+
+function buildStepReason(job, step) {
+  switch (step.id) {
+    case 'appointment': return 'New claim — appointment not yet confirmed.';
+    case 'inspection': return job.appointment_confirmed ? 'Appointment confirmed; physical inspection pending.' : 'Survey scheduling in progress.';
+    case 'ila': return job.survey_status === 'completed' ? 'Survey completed; ILA not yet issued.' : 'ILA required for this claim.';
+    case 'lor': return 'LOR not yet issued.';
+    case 'documents': return 'Awaiting documents from insured.';
+    case 'assessment': return 'Documents in hand; assessment not yet prepared.';
+    case 'director_verification': return 'Assessment prepared; Director verification pending.';
+    case 'insurer_approval': return 'Assessment approved by Director; insurer approval is required for this claim.';
+    case 'insured_consent': return job.insurer_approval_required === 'no'
+      ? 'Director verification completed; insurer approval is marked Not Required.'
+      : 'Insurer approval obtained; insured consent pending.';
+    case 'fsr_preparation': return 'Insured consent accepted; FSR not yet prepared.';
+    case 'fsr_final_verification': return 'FSR prepared; Director final verification pending.';
+    case 'fsr_submission': return 'FSR verified; not yet submitted.';
+    case 'dispatch': return 'FSR submitted; hard copy dispatch required for this claim.';
+    case 'pod': return 'Hard copy dispatched; proof of delivery pending.';
+    default: return '';
+  }
+}
+
+// Real timestamps only — never a fabricated date for a field that lacks
+// one. Falls back to jobs.created_at (always present) when nothing else
+// has happened yet.
+function getLastMeaningfulActivity(job, ctx) {
+  const timestamps = [
+    job.updated_at,
+    ...ctx.surveyVisits.map(v => v.created_at),
+    ...ctx.reminders.map(r => r.created_at),
+    ...ctx.docReceipts.map(d => d.created_at),
+    ...ctx.queries.map(q => q.updated_at || q.created_at),
+    ...ctx.taskActivity.map(a => a.ts),
+    ...ctx.workSessions.map(s => s.ended_at || s.started_at),
+  ].filter(Boolean);
+  return timestamps.length ? Math.max(...timestamps) : job.created_at;
+}
+
+// A handful of high-confidence, high-value checks — deliberately not an
+// exhaustive validation engine (per spec's explicit caution against one).
+function findTaskMilestoneMismatches(job, ctx) {
+  const mismatches = [];
+  const byType = {};
+  for (const t of ctx.tasks) (byType[t.task_type] ||= []).push(t);
+
+  const assessTasks = byType['assessment_preparation'] || [];
+  if (job.assessment_status === 'not_started' && assessTasks.some(t => t.status === 'completed')) {
+    mismatches.push({ code: 'task_milestone_mismatch', detail: 'Assessment Preparation task completed, but the Assessment milestone is still Not Started.' });
+  }
+  if (job.assessment_status === 'prepared' && assessTasks.some(t => !['completed', 'cancelled'].includes(t.status))) {
+    mismatches.push({ code: 'task_milestone_mismatch', detail: 'Assessment milestone is Prepared, but a related task remains open.' });
+  }
+
+  const fsrPrintTasks = byType['fsr_print_mail'] || [];
+  if (job.fsr_submitted !== 'yes' && fsrPrintTasks.some(t => t.status === 'completed')) {
+    mismatches.push({ code: 'task_milestone_mismatch', detail: 'FSR Print & Mail task completed, but FSR Submitted is still not Yes.' });
+  }
+
+  const dispatchTasks = byType['report_dispatch'] || [];
+  if (job.hard_copy_sent !== 'yes' && dispatchTasks.some(t => t.status === 'completed')) {
+    mismatches.push({ code: 'task_milestone_mismatch', detail: 'Report Dispatch task completed, but Hard Copy Sent is still not Yes.' });
+  }
+
+  return mismatches;
+}
+
+// Only obvious, high-confidence contradictions — never a guess about valid
+// (if unusual) conditional workflow states.
+function findWorkflowInconsistencies(job) {
+  const issues = [];
+  if (job.fsr_submitted === 'yes' && job.fsr_preparation_status === 'not_started') {
+    issues.push({ code: 'workflow_inconsistency', detail: 'FSR Submitted is Yes, but FSR Preparation is still Not Started.' });
+  }
+  if (job.pod_status === 'delivered' && job.hard_copy_sent !== 'yes') {
+    issues.push({ code: 'workflow_inconsistency', detail: 'POD is Delivered, but Hard Copy Sent is not Yes.' });
+  }
+  if (job.insured_consent_status === 'accepted' && job.assessment_status !== 'prepared') {
+    issues.push({ code: 'workflow_inconsistency', detail: 'Insured Consent is Accepted, but Assessment is not yet Prepared.' });
+  }
+  if (job.stage === 'closed' && !job.closure_date) {
+    issues.push({ code: 'workflow_inconsistency', detail: 'Job stage is Closed, but no closure record (closure date) exists.' });
+  }
+  const preFsrStages = ['new_claim', 'awaiting_inspection', 'inspection_done', 'ila_lor_issued', 'awaiting_docs'];
+  if (job.stage !== 'closed' && job.fsr_submitted === 'yes' && preFsrStages.includes(job.stage)) {
+    issues.push({ code: 'workflow_inconsistency', detail: `Stage says "${job.stage}", but FSR is already submitted.` });
+  }
+  return issues;
+}
+
+function findWorkflowAlerts(job, ctx, walk, currentStepId) {
+  const alerts = [];
+
+  if (walk.decisionNeeded) {
+    alerts.push({ code: 'decide_required', step: walk.decisionNeeded.id, label: `Decide whether ${walk.decisionNeeded.label.toLowerCase()} is required` });
+  }
+
+  if (currentStepId === 'documents') {
+    const freqDays = reminderDueIntervalDays(job);
+    if (freqDays != null) {
+      const lastReminderTs = ctx.reminders.length ? Math.max(...ctx.reminders.map(r => r.created_at)) : job.created_at;
+      const sinceReminder = daysSinceTs(lastReminderTs, ctx.nowMs);
+      if (sinceReminder != null && sinceReminder >= freqDays) {
+        alerts.push({ code: 'reminder_due', days: sinceReminder });
+      }
+    }
+  }
+
+  const overdueTasks = ctx.tasks.filter(t => t.is_overdue);
+  if (overdueTasks.length > 0) alerts.push({ code: 'overdue_task', count: overdueTasks.length });
+
+  if (walk.currentStep && walk.currentStep.taskType) {
+    const hasOpenMatchingTask = ctx.tasks.some(t => t.task_type === walk.currentStep.taskType && t.status !== 'completed' && t.status !== 'cancelled');
+    if (!hasOpenMatchingTask) alerts.push({ code: 'no_matching_task', task_type: walk.currentStep.taskType });
+  }
+
+  const openQueries = ctx.queries.filter(q => q.status === 'open');
+  if (openQueries.length > 0) alerts.push({ code: 'query_open', count: openQueries.length });
+
+  if (ctx.billing) {
+    if (ctx.billing.paymentStatus === 'bill_pending' && job.fsr_submitted === 'yes') alerts.push({ code: 'bill_pending' });
+    if (['unpaid', 'part_payment'].includes(ctx.billing.paymentStatus)) alerts.push({ code: 'payment_pending' });
+  }
+
+  alerts.push(...findTaskMilestoneMismatches(job, ctx));
+  alerts.push(...findWorkflowInconsistencies(job));
+
+  return alerts;
+}
+
+function deriveWorkflowHealth(job, daysSinceActivity, attentionFlags) {
+  if (job.stage === 'closed') return 'closed';
+  const HEALTH_RANK = { on_track: 0, watch: 1, attention: 2, stalled: 3 };
+  let health = daysSinceActivity == null ? 'on_track'
+    : daysSinceActivity >= STALL_THRESHOLDS_DAYS.stalled ? 'stalled'
+    : daysSinceActivity >= STALL_THRESHOLDS_DAYS.attention ? 'attention'
+    : daysSinceActivity >= STALL_THRESHOLDS_DAYS.watch ? 'watch'
+    : 'on_track';
+  const hasBlockingAttention = attentionFlags.some(a => ['overdue_task', 'query_open', 'decide_required'].includes(a.code));
+  if (hasBlockingAttention && HEALTH_RANK.attention > HEALTH_RANK[health]) health = 'attention';
+  return health;
+}
+
+// The single pure analysis entry point. `job` must already be the merged
+// job+billing view (getJobWithBilling); `ctx` bundles this job's child-table
+// rows plus `nowMs` and the freshly-computed `billing` (computeBilling
+// output) — reused, never re-derived, for the billing/closure phase so
+// there is exactly one closure-eligibility policy in the whole app.
+function analyzeJobWorkflow(job, ctx) {
+  if (job.stage === 'closed') {
+    return {
+      phase: 'closed', phase_label: 'Closed', current_step: null, current_step_label: 'Closed',
+      next_action: null, reason: '', attention: [],
+      completed_steps: WORKFLOW_STEPS.map(s => s.id), pending_steps: [], skipped_steps: [],
+      workflow_health: 'closed', days_since_activity: null,
+    };
+  }
+
+  const walk = deriveWorkflowSteps(job);
+  let phase, currentStepId, currentStepLabel, nextAction, reason;
+
+  if (walk.currentStep) {
+    phase = walk.currentStep.phase;
+    currentStepId = walk.currentStep.id;
+    currentStepLabel = walk.currentStep.label;
+    nextAction = { code: walk.currentStep.id, label: walk.currentStep.nextAction, task_type: walk.currentStep.taskType };
+    reason = buildStepReason(job, walk.currentStep);
+
+    if (currentStepId === 'director_verification' && job.director_verification_status === 'returned_for_revision') {
+      nextAction = { code: 'rework_assessment', label: 'Rework assessment', task_type: 'assessment_preparation' };
+      reason = job.director_verification_remarks ? `Returned by Director: ${job.director_verification_remarks}` : 'Assessment returned for revision by Director.';
+    } else if (currentStepId === 'fsr_final_verification' && job.fsr_final_verification_status === 'returned_for_revision') {
+      nextAction = { code: 'rework_fsr', label: 'Rework FSR', task_type: 'fsr_preparation' };
+      reason = job.fsr_final_verification_remarks ? `Returned by Director: ${job.fsr_final_verification_remarks}` : 'FSR returned for revision by Director.';
+    }
+  } else {
+    phase = 'billing_closure';
+    const billing = ctx.billing;
+    if (billing.billRequired === 'to_be_decided') {
+      currentStepId = 'billing_decision'; currentStepLabel = 'Billing Decision';
+      nextAction = { code: 'decide_billing', label: 'Decide whether billing is required' };
+      reason = 'Billing requirement has not yet been decided for this claim.';
+    } else if (billing.paymentStatus === 'bill_pending') {
+      currentStepId = 'billing'; currentStepLabel = 'Billing';
+      nextAction = { code: 'bill_entry', label: 'Raise bill', task_type: 'bill_entry' };
+      reason = 'FSR submitted and all preconditions complete; invoice has not yet been raised.';
+    } else if (['unpaid', 'part_payment'].includes(billing.paymentStatus)) {
+      currentStepId = 'payment'; currentStepLabel = 'Payment Follow-up';
+      nextAction = { code: 'payment_followup', label: 'Follow up fee payment' };
+      reason = `Invoice raised; ${formatINR(billing.outstandingPaise)} outstanding.`;
+    } else if (billing.closureEligible) {
+      currentStepId = 'ready_for_closure'; currentStepLabel = 'Ready for Closure';
+      nextAction = { code: 'close_job', label: 'Close job' };
+      reason = 'All closure conditions satisfied.';
+    } else {
+      currentStepId = 'billing'; currentStepLabel = 'Billing'; nextAction = null; reason = '';
+    }
+  }
+
+  const daysSinceActivity = daysSinceTs(getLastMeaningfulActivity(job, ctx), ctx.nowMs);
+  const attention = findWorkflowAlerts(job, ctx, walk, currentStepId);
+  const health = deriveWorkflowHealth(job, daysSinceActivity, attention);
+
+  if (nextAction && nextAction.task_type && attention.some(a => a.code === 'no_matching_task')) {
+    nextAction.suggested_title = `${currentStepLabel} — ${job.id}`;
+  }
+
+  return {
+    phase, phase_label: PHASE_LABELS[phase] || phase,
+    current_step: currentStepId, current_step_label: currentStepLabel,
+    next_action: nextAction, reason,
+    attention, completed_steps: walk.completedSteps, pending_steps: walk.pendingSteps, skipped_steps: walk.skippedSteps,
+    workflow_health: health, days_since_activity: daysSinceActivity,
+  };
+}
+
+// Bulk-fetches every child-table row needed for workflow analysis in one
+// pass (mirrors listJobs()'s established "fetch once, group by job_id"
+// pattern) rather than issuing per-job queries — cheap at TFAM's current
+// scale and avoids the "repeatedly fetch huge payloads" pitfall the spec
+// warns about. `jobIds`, when given, limits which jobs get a context
+// entry; when null, every open (non-closed) job gets one.
+async function buildWorkflowContexts(db, jobIds) {
+  const { results: allJobs } = await db.prepare('SELECT * FROM jobs').all();
+  const { results: billingRows } = await db.prepare('SELECT * FROM job_billing').all();
+  const { results: feeReceiptRows } = await db.prepare('SELECT job_id, amount, tds_deduction, writeoff_amount FROM fee_receipts').all();
+  const { results: surveyVisits } = await db.prepare('SELECT job_id, created_at FROM survey_visits').all();
+  const { results: reminders } = await db.prepare('SELECT job_id, created_at FROM claim_reminders').all();
+  const { results: docReceipts } = await db.prepare('SELECT job_id, created_at FROM document_receipt_events').all();
+  const { results: queries } = await db.prepare('SELECT job_id, status, created_at, updated_at FROM claim_queries').all();
+  const { results: taskRows } = await db.prepare('SELECT * FROM tasks').all();
+  const { results: taskAssigneeRows } = await db.prepare('SELECT task_id, staff_id FROM task_assignees').all();
+  const { results: taskActivityRows } = await db.prepare('SELECT task_id, ts FROM task_activity').all();
+  const { results: workSessionRows } = await db.prepare('SELECT task_id, started_at, ended_at FROM task_work_sessions').all();
+
+  const billingByJob = {}; for (const b of billingRows) billingByJob[b.job_id] = b;
+  const feeSumsByJob = {};
+  for (const r of feeReceiptRows) {
+    const s = (feeSumsByJob[r.job_id] ||= { receivedPaise: 0, tdsPaise: 0, writeoffPaise: 0 });
+    s.receivedPaise += toPaise(r.amount); s.tdsPaise += toPaise(r.tds_deduction); s.writeoffPaise += toPaise(r.writeoff_amount);
+  }
+  const groupBy = (rows, key) => { const m = {}; for (const r of rows) (m[r[key]] ||= []).push(r); return m; };
+  const visitsByJob = groupBy(surveyVisits, 'job_id');
+  const remindersByJob = groupBy(reminders, 'job_id');
+  const docReceiptsByJob = groupBy(docReceipts, 'job_id');
+  const queriesByJob = groupBy(queries, 'job_id');
+
+  const assigneesByTask = {};
+  for (const a of taskAssigneeRows) (assigneesByTask[a.task_id] ||= []).push(a.staff_id);
+  const statusById = {};
+  for (const t of taskRows) statusById[t.id] = t.status;
+  const tasksWithMeta = taskRows.map(t => ({
+    ...t, assignee_ids: assigneesByTask[t.id] || [],
+    is_overdue: computeTaskOverdue(t),
+    is_blocked: !!t.blocked_by_task_id && statusById[t.blocked_by_task_id] !== 'completed',
+  }));
+  const tasksByJob = groupBy(tasksWithMeta, 'job_id');
+  const activityByTask = groupBy(taskActivityRows, 'task_id');
+  const sessionsByTask = groupBy(workSessionRows, 'task_id');
+
+  const nowMs = Date.now();
+  const contexts = {};
+  for (const row of allJobs) {
+    if (jobIds && !jobIds.includes(row.id)) continue;
+    const job = mergeJobBilling(rowToJob(row), billingByJob[row.id]);
+    const jobTasks = tasksByJob[row.id] || [];
+    const taskActivity = jobTasks.flatMap(t => activityByTask[t.id] || []);
+    const workSessions = jobTasks.flatMap(t => sessionsByTask[t.id] || []);
+    const sums = feeSumsByJob[row.id] || { receivedPaise: 0, tdsPaise: 0, writeoffPaise: 0 };
+    contexts[row.id] = {
+      nowMs,
+      billing: computeBilling(job, sums),
+      surveyVisits: visitsByJob[row.id] || [],
+      reminders: remindersByJob[row.id] || [],
+      docReceipts: docReceiptsByJob[row.id] || [],
+      queries: queriesByJob[row.id] || [],
+      tasks: jobTasks,
+      taskActivity, workSessions,
+      job,
+    };
+  }
+  return contexts;
+}
+
+async function getJobWorkflowAnalysis(db, jobId) {
+  const contexts = await buildWorkflowContexts(db, [jobId]);
+  const ctx = contexts[jobId];
+  if (!ctx) return null;
+  return analyzeJobWorkflow(ctx.job, ctx);
+}
+
+// Dashboard "Claims Needing Attention" aggregation — every non-closed job,
+// analyzed once, sorted by the spec's severity order (stalled > overdue
+// task > open query > approval-pending step > reminder due > no matching
+// task > watch), older inactivity first within the same severity tier.
+const ATTENTION_APPROVAL_STEPS = ['director_verification', 'insurer_approval', 'insured_consent', 'fsr_final_verification'];
+function attentionSeverityRank(analysis) {
+  if (analysis.workflow_health === 'stalled') return 0;
+  if (analysis.attention.some(a => a.code === 'overdue_task')) return 1;
+  if (analysis.attention.some(a => a.code === 'query_open')) return 2;
+  if (ATTENTION_APPROVAL_STEPS.includes(analysis.current_step)) return 3;
+  if (analysis.attention.some(a => a.code === 'reminder_due')) return 4;
+  if (analysis.attention.some(a => a.code === 'no_matching_task')) return 5;
+  if (analysis.workflow_health === 'watch') return 6;
+  return 7;
+}
+async function listWorkflowAttention(db) {
+  const contexts = await buildWorkflowContexts(db, null);
+  const rows = [];
+  for (const jobId of Object.keys(contexts)) {
+    const ctx = contexts[jobId];
+    if (ctx.job.stage === 'closed') continue;
+    const analysis = analyzeJobWorkflow(ctx.job, ctx);
+    rows.push({
+      job_id: jobId, title: ctx.job.title, insured: ctx.job.insured,
+      director_ids: ctx.job.director_ids, surveyor_ids: ctx.job.surveyor_ids,
+      branch_ids: ctx.job.branch_ids, backstaff_ids: ctx.job.backstaff_ids,
+      analysis,
+    });
+  }
+  rows.sort((a, b) => {
+    const rankDiff = attentionSeverityRank(a.analysis) - attentionSeverityRank(b.analysis);
+    if (rankDiff !== 0) return rankDiff;
+    const aDays = a.analysis.days_since_activity ?? -1, bDays = b.analysis.days_since_activity ?? -1;
+    return bDays - aDays;
+  });
+  return rows;
+}
+
 async function getSetting(db, key) {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first();
   return row ? row.value : null;
@@ -2524,6 +2971,20 @@ export default {
       if (pathname === '/api/my-work/pin' && request.method === 'PUT') {
         const body = await request.json();
         return json(await setDoNextPin(db, user, body.task_id || null));
+      }
+
+      if (pathname === '/api/workflow/attention' && request.method === 'GET') {
+        return json(await listWorkflowAttention(db));
+      }
+
+      {
+        const workflowMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/workflow\/?$/);
+        if (workflowMatch && request.method === 'GET') {
+          const jobId = decodeURIComponent(workflowMatch[1]);
+          const analysis = await getJobWorkflowAnalysis(db, jobId);
+          if (!analysis) return error('job not found', 404);
+          return json(analysis);
+        }
       }
 
       {

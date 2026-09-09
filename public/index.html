@@ -35,6 +35,15 @@
   --blue:#6699FF;--blue-bg:#0A1225;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* V1.5 regression fix: the `hidden` attribute only maps to display:none in
+   the browser's own (lowest-priority) default stylesheet — any component
+   class below that sets its own `display` (flex/grid/etc.) was silently
+   winning over it, per normal CSS cascade rules, regardless of specificity.
+   This single global, !important rule makes `el.hidden = true` authoritative
+   everywhere in the app, superseding the handful of narrower per-component
+   [hidden] overrides further down (kept as harmless now-redundant duplicates
+   rather than churning unrelated lines). */
+[hidden]{display:none!important}
 html,body{height:100%;overflow:hidden}
 body{font-family:'DM Sans',system-ui,sans-serif;background:var(--ground);color:var(--text-pri);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
 
@@ -319,6 +328,41 @@ details.sp-section[open] summary{margin-bottom:0}
 .mw-wb-title{font-size:12.5px;font-weight:600}
 .mw-wb-detail{font-size:11.5px;color:var(--text-sec);margin-top:2px}
 
+/* ── WORKFLOW INTELLIGENCE (V1.5) ── */
+.attention-wrap{margin-bottom:14px}
+.attention-list{display:flex;flex-direction:column;gap:6px}
+.attention-row{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;cursor:pointer;flex-wrap:wrap}
+.attention-row:hover{border-color:var(--amber)}
+.attention-row.health-stalled{border-left-color:var(--red)}
+.attention-row.health-attention{border-left-color:#F97316}
+.attention-row.health-watch{border-left-color:var(--amber)}
+.attention-row.health-on_track{border-left-color:var(--green)}
+.attention-main{flex:1;min-width:220px}
+.attention-job{font-size:12.5px;font-weight:600}
+.attention-step{font-size:11.5px;color:var(--text-sec);margin-top:2px}
+.attention-primary{font-size:11.5px;color:var(--red);margin-top:3px}
+.attention-secondary{font-size:10.5px;color:var(--text-faint);margin-top:1px}
+.attention-days{font-family:'DM Mono',monospace;font-size:11px;color:var(--text-faint);white-space:nowrap}
+.workflow-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.workflow-card-top{display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap}
+.workflow-health-badge{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:100px}
+.workflow-health-badge.on_track{background:var(--green-bg);color:var(--green)}
+.workflow-health-badge.watch{background:var(--amber-bg);color:var(--amber)}
+.workflow-health-badge.attention{background:#FFF1E6;color:#F97316}
+.workflow-health-badge.stalled{background:var(--red-bg);color:var(--red)}
+.workflow-health-badge.closed{background:var(--ground);color:var(--text-faint)}
+.workflow-phase{font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em;font-family:'DM Mono',monospace}
+.workflow-step{font-size:15px;font-weight:700;margin-top:2px}
+.workflow-next{font-size:13px;color:var(--amber);margin-top:8px;font-weight:600}
+.workflow-reason{font-size:12px;color:var(--text-sec);margin-top:2px}
+.workflow-alerts{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.workflow-alert-line{font-size:11.5px;color:var(--red);display:flex;align-items:center;gap:6px}
+.workflow-timeline{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.wf-tl-item{font-size:10.5px;padding:3px 9px;border-radius:100px;background:var(--ground);border:1px solid var(--border);color:var(--text-faint);white-space:nowrap}
+.wf-tl-item.done{background:var(--green-bg);color:var(--green);border-color:transparent}
+.wf-tl-item.current{background:var(--amber);color:#fff;border-color:transparent;font-weight:600}
+.wf-tl-item.skipped{color:var(--text-faint);text-decoration:line-through;opacity:.6}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -401,6 +445,10 @@ details.sp-section[open] summary{margin-bottom:0}
       <div class="mywork-dash-hdr">🎯 MY WORK</div>
       <div id="myworkDashBody"></div>
       <div class="mywork-dash-link">Open My Work →</div>
+    </div>
+    <div class="attention-wrap" id="attentionWrap">
+      <div class="mw-section-hdr" style="margin-top:0">Claims Needing Attention</div>
+      <div id="attentionList"></div>
     </div>
     <div class="kanban" id="kanban"></div>
   </div>
@@ -1539,6 +1587,8 @@ let availableMinutesFilter = null; // "I Have Time" selection — UI-only, sessi
 let laterExpanded = false;       // My Work LATER section "Show all" toggle
 let awbTimerInterval = null;     // ticking interval for the global Active Work Bar
 let taskCardTimerInterval = null; // ticking interval for "WORKING NOW" badges on task cards
+let workflowAttention = [];      // last fetched /api/workflow/attention response (Dashboard)
+let currentJobWorkflow = null;   // last fetched /api/jobs/:id/workflow response (open Job Detail panel)
 
 // ── TASKS (V1.2) — authoritative TFAM Task Type Master, mirrors worker.js ──
 const TASK_TYPES = [
@@ -1687,7 +1737,7 @@ async function logout() {
 async function fetchAll() {
   try {
     const myWorkUrl = '/api/my-work' + (availableMinutesFilter ? ('?available_minutes=' + availableMinutesFilter) : '');
-    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes] = await Promise.all([
+    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes, wfRes] = await Promise.all([
       fetch(API + '/api/jobs'),
       fetch(API + '/api/log'),
       fetch(API + '/api/staff'),
@@ -1698,8 +1748,9 @@ async function fetchAll() {
       fetch(API + '/api/work/live'),
       fetch(API + '/api/work/sessions'),
       fetch(API + myWorkUrl),
+      fetch(API + '/api/workflow/attention'),
     ]);
-    const all = [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes];
+    const all = [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes, wfRes];
     if (all.some(r => r.status === 401)) { sessionExpired(); return; }
     if (all.some(r => !r.ok)) throw new Error('bad response');
     jobs = await jRes.json();
@@ -1712,6 +1763,7 @@ async function fetchAll() {
     liveWork = await liveRes.json();
     workSessions = await wsRes.json();
     myWork = await mwRes.json();
+    workflowAttention = await wfRes.json();
     setOnline(true);
     buildLogFilters();
     buildInsurerList();
@@ -1786,6 +1838,7 @@ function renderAll() {
   renderActiveWorkBar();
   renderMyWorkDashWidget();
   renderMyWorkView();
+  renderClaimsNeedingAttention();
 }
 
 // ── STATS STRIP ───────────────────────────────────────────────
@@ -2056,6 +2109,7 @@ function openJob(id) {
   toggleInsurerApprovalFields();
   toggleHardCopyFields();
   toggleBillFields();
+  loadJobWorkflow(id);
 
   document.getElementById('overlay').classList.add('open');
   document.getElementById('sidePanel').classList.add('open');
@@ -2063,8 +2117,127 @@ function openJob(id) {
 
 function closePanel() {
   openJobId = null;
+  currentJobWorkflow = null;
   document.getElementById('overlay').classList.remove('open');
   document.getElementById('sidePanel').classList.remove('open');
+}
+
+// ── WORKFLOW INTELLIGENCE (V1.5) ────────────────────────────────
+// Purely a formatter/renderer for whatever worker.js's analyzeJobWorkflow()
+// already decided — no ranking/eligibility logic is reproduced here, per
+// spec: "frontend receives structured analysis," server stays the sole
+// source of truth (reused for Director Control Centre / reports / a future
+// mobile client later, without re-deriving the rules a second time).
+const WORKFLOW_HEALTH_LABELS = { on_track: 'On Track', watch: 'Watch', attention: 'Attention', stalled: 'Stalled', closed: 'Closed' };
+const WORKFLOW_ALERT_TEXT = {
+  decide_required: a => a.label,
+  reminder_due: a => `No reminder for ${a.days} day${a.days === 1 ? '' : 's'}`,
+  overdue_task: a => `${a.count} overdue task${a.count === 1 ? '' : 's'} linked to this claim`,
+  no_matching_task: () => 'No task assigned for this next action',
+  query_open: a => `${a.count} open quer${a.count === 1 ? 'y' : 'ies'}`,
+  bill_pending: () => 'Bill not yet raised',
+  payment_pending: () => 'Payment outstanding',
+  task_milestone_mismatch: a => a.detail,
+  workflow_inconsistency: a => a.detail,
+};
+// Client-side mirror of worker.js's WORKFLOW_STEPS labels/order — display
+// only (used for the timeline strip); the actual applicability/completion
+// RULES live only server-side.
+const WORKFLOW_STEP_LABELS = [
+  ['appointment', 'Appointment'], ['inspection', 'Inspection'], ['ila', 'ILA'], ['lor', 'LOR'],
+  ['documents', 'Documents'], ['assessment', 'Assessment'], ['director_verification', 'Director Verification'],
+  ['insurer_approval', 'Insurer Approval'], ['insured_consent', 'Insured Consent'],
+  ['fsr_preparation', 'FSR Prep'], ['fsr_final_verification', 'FSR Verification'], ['fsr_submission', 'FSR Submission'],
+  ['dispatch', 'Dispatch'], ['pod', 'POD'],
+];
+
+async function loadJobWorkflow(jobId) {
+  const card = document.getElementById('sp-workflow-card');
+  try {
+    const analysis = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/workflow');
+    if (openJobId !== jobId) return; // panel closed/switched before this landed
+    currentJobWorkflow = analysis;
+    if (card) card.innerHTML = workflowCardHtml(analysis, jobId);
+  } catch(e) {
+    if (card) card.innerHTML = '<div style="font-size:12px;color:var(--text-faint)">Workflow analysis unavailable.</div>';
+  }
+}
+
+function workflowTimelineHtml(a) {
+  if (a.phase === 'closed') return '<span class="wf-tl-item done">✓ Closed</span>';
+  return WORKFLOW_STEP_LABELS.map(([id, label]) => {
+    let cls = 'pending', mark = '○';
+    if (a.completed_steps.includes(id)) { cls = 'done'; mark = '✓'; }
+    else if (a.skipped_steps.includes(id)) { cls = 'skipped'; mark = 'N/A'; }
+    else if (a.current_step === id) { cls = 'current'; mark = '●'; }
+    return `<span class="wf-tl-item ${cls}">${mark} ${esc(label)}</span>`;
+  }).join('');
+}
+
+function workflowCardHtml(a, jobId) {
+  const healthLabel = WORKFLOW_HEALTH_LABELS[a.workflow_health] || a.workflow_health;
+  const alerts = (a.attention || []).map(x =>
+    `<div class="workflow-alert-line">⚠ ${esc(WORKFLOW_ALERT_TEXT[x.code] ? WORKFLOW_ALERT_TEXT[x.code](x) : x.code)}</div>`
+  ).join('');
+  const noTaskAlert = (a.attention || []).some(x => x.code === 'no_matching_task');
+  const addSuggestedBtn = (noTaskAlert && a.next_action && a.next_action.task_type)
+    ? `<button type="button" class="btn-secondary" style="margin-top:10px" onclick="addSuggestedTask('${jobId}','${a.next_action.task_type}',${esc(JSON.stringify(a.next_action.suggested_title || (a.current_step_label + ' — ' + jobId)))})">+ Add Suggested Task</button>`
+    : '';
+  const closeBtn = (a.next_action && a.next_action.code === 'close_job' && canCloseJobs())
+    ? `<button type="button" class="btn-primary" style="margin-top:10px" onclick="openCloseJobModal('${jobId}')">Close Job</button>`
+    : '';
+  const daysLine = a.days_since_activity != null
+    ? `<div class="workflow-reason">Last meaningful activity: ${a.days_since_activity === 0 ? 'today' : a.days_since_activity + ' day' + (a.days_since_activity === 1 ? '' : 's') + ' ago'}</div>`
+    : '';
+
+  return `
+    <div class="workflow-card-top">
+      <div>
+        <div class="workflow-phase">${esc(a.phase_label)}</div>
+        <div class="workflow-step">${esc(a.current_step_label || '—')}</div>
+      </div>
+      <span class="workflow-health-badge ${a.workflow_health}">${esc(healthLabel)}</span>
+    </div>
+    ${a.next_action ? `<div class="workflow-next">Next: ${esc(a.next_action.label)}</div>` : ''}
+    ${a.reason ? `<div class="workflow-reason">${esc(a.reason)}</div>` : ''}
+    ${daysLine}
+    ${alerts ? `<div class="workflow-alerts">${alerts}</div>` : ''}
+    ${addSuggestedBtn}${closeBtn}
+    <div class="workflow-timeline">${workflowTimelineHtml(a)}</div>
+  `;
+}
+
+// Opens the existing V1.2 Add Task form, preselecting job/type/title — the
+// user still has to review and explicitly click "Add Task"; nothing is
+// ever created automatically by workflow intelligence.
+function addSuggestedTask(jobId, taskType, title) {
+  openTaskForm(jobId, { taskType, title });
+}
+
+// ── Dashboard: Claims Needing Attention ──
+function attentionRowHtml(row) {
+  const a = row.analysis;
+  const primary = (a.attention && a.attention[0]) ? (WORKFLOW_ALERT_TEXT[a.attention[0].code] ? WORKFLOW_ALERT_TEXT[a.attention[0].code](a.attention[0]) : a.attention[0].code) : null;
+  const secondary = (a.attention && a.attention[1]) ? (WORKFLOW_ALERT_TEXT[a.attention[1].code] ? WORKFLOW_ALERT_TEXT[a.attention[1].code](a.attention[1]) : a.attention[1].code) : null;
+  const days = a.days_since_activity;
+  return `
+    <div class="attention-row health-${a.workflow_health}" onclick="openJob('${row.job_id}')">
+      <div class="attention-main">
+        <div class="attention-job">${esc(row.job_id)} — ${esc(row.insured || row.title || '')}</div>
+        <div class="attention-step">${esc(a.current_step_label || a.phase_label)}</div>
+        ${primary ? `<div class="attention-primary">${esc(primary)}</div>` : ''}
+        ${secondary ? `<div class="attention-secondary">${esc(secondary)}</div>` : ''}
+      </div>
+      <div class="attention-days">${days != null ? days + 'd' : ''}</div>
+    </div>`;
+}
+function renderClaimsNeedingAttention() {
+  const el = document.getElementById('attentionList');
+  if (!el) return;
+  const rows = (workflowAttention || []).slice(0, 10);
+  el.innerHTML = rows.length === 0
+    ? '<div class="task-empty">No claims currently need attention.</div>'
+    : `<div class="attention-list">${rows.map(attentionRowHtml).join('')}</div>`;
 }
 
 function buildJobPanel(j) {
@@ -2115,6 +2288,12 @@ function buildJobPanel(j) {
   }).join('');
 
   return `
+  <!-- Workflow Intelligence (V1.5) — populated async by loadJobWorkflow() -->
+  <div class="sp-section">
+    <div class="sp-section-label">Workflow</div>
+    <div class="workflow-card" id="sp-workflow-card"><div style="font-size:12px;color:var(--text-faint)">Loading workflow…</div></div>
+  </div>
+
   <!-- Stage -->
   <div class="sp-section">
     <div class="sp-section-label">Pipeline Stage</div>
@@ -3341,9 +3520,12 @@ function toggleTaskWaitingReason(prefix) {
 }
 
 // ── Add Task (full form; quick fields up top, rest under More Details) ──
-function openTaskForm(jobId) {
-  document.getElementById('tfm-title').value = '';
-  document.getElementById('tfm-type').innerHTML = taskTypeOptionsHtml();
+// `prefill` (optional, used by V1.5's "Add Suggested Task") pre-selects a
+// Task Type and Title — still just a form prefill, the user must review
+// and explicitly click Add Task; nothing is created automatically.
+function openTaskForm(jobId, prefill) {
+  document.getElementById('tfm-title').value = (prefill && prefill.title) || '';
+  document.getElementById('tfm-type').innerHTML = taskTypeOptionsHtml(prefill && prefill.taskType);
   document.getElementById('tfm-priority').value = 'normal';
   document.getElementById('tfm-job').innerHTML = taskJobOptionsHtml(jobId || '');
   document.getElementById('tfm-due-date').value = '';
