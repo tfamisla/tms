@@ -541,6 +541,7 @@ details.sp-section[open] summary{margin-bottom:0}
       </select>
       <select class="log-filter-sel" id="ac-branch" onchange="renderAllClaimsView()"><option value="">All branches</option></select>
       <select class="log-filter-sel" id="ac-director" onchange="renderAllClaimsView()"><option value="">All directors</option></select>
+      <button type="button" class="btn-secondary" onclick="exportAllClaimsToExcel()">⬇ Export to Excel</button>
       <span class="ac-count" id="ac-count"></span>
     </div>
     <div class="ac-table-wrap">
@@ -2510,12 +2511,10 @@ function buildAcFilterOptions() {
   }
 }
 
-function renderAllClaimsView() {
-  const theadEl = document.getElementById('ac-thead');
-  const tbodyEl = document.getElementById('ac-tbody');
-  if (!theadEl || !tbodyEl) return;
-  buildAcFilterOptions();
-
+// Shared by the table render and the Excel export, so "what you see is
+// what you export" — the export can never silently diverge from the
+// currently applied search/stage/branch/director filters and sort order.
+function getFilteredSortedClaims() {
   const search = (document.getElementById('ac-search').value || '').trim().toLowerCase();
   const stage = document.getElementById('ac-stage').value;
   const branch = document.getElementById('ac-branch').value;
@@ -2536,6 +2535,16 @@ function renderAllClaimsView() {
     const cmp = av < bv ? -1 : av > bv ? 1 : 0;
     return acSortDir === 'asc' ? cmp : -cmp;
   });
+  return rows;
+}
+
+function renderAllClaimsView() {
+  const theadEl = document.getElementById('ac-thead');
+  const tbodyEl = document.getElementById('ac-tbody');
+  if (!theadEl || !tbodyEl) return;
+  buildAcFilterOptions();
+
+  const rows = getFilteredSortedClaims();
 
   document.getElementById('ac-count').textContent = `${rows.length} of ${jobs.length} claims`;
 
@@ -2569,6 +2578,48 @@ function renderAllClaimsView() {
       <td>${ageDays}d</td>
     </tr>`;
   }).join('');
+}
+
+// Simple manual export — no server round-trip, no external service. Uses
+// the same SheetJS library already loaded for Bulk Import, and exports
+// exactly the rows/columns currently visible in the All Claims table (same
+// filters, same sort), so what you see is what you get in the file.
+function exportAllClaimsToExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('The Excel library failed to load — check your internet connection and try again.');
+    return;
+  }
+  const rows = getFilteredSortedClaims();
+  if (rows.length === 0) { alert('No claims match the current filters — nothing to export.'); return; }
+
+  const data = rows.map(j => {
+    const stageInfo = STAGES.find(s => s.id === j.stage);
+    const health = acHealthOf(j);
+    const ageDays = Math.floor((Date.now() - j.created_at) / 86400000);
+    return {
+      'Job No': j.id,
+      'Insured': j.insured || '',
+      'Insurer': j.insurer || '',
+      'Policy No': j.policy_no || '',
+      'Policy Name': j.policy_name || '',
+      'Claim No': j.claim_no || '',
+      'Stage': stageInfo ? stageInfo.label : j.stage,
+      'Current Step': health.step,
+      'Health': health.label,
+      'Branch': acBranchNames(j),
+      'Director': acDirectorNames(j),
+      'Deputation Date': j.date_intimation || '',
+      'Loss Date': j.date_loss || '',
+      'Age (days)': ageDays,
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws['!cols'] = Object.keys(data[0]).map(k => ({ wch: Math.max(k.length, 14) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Claims');
+  const dateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  XLSX.writeFile(wb, `tms-claims-export-${dateStr}.xlsx`);
 }
 
 function buildJobPanel(j) {
