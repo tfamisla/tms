@@ -537,6 +537,73 @@ async function createJob(db, body) {
   return rowToJob(job);
 }
 
+// ── BULK IMPORT (claims from Excel/CSV) ─────────────────────────────
+// Every row reuses createJob() completely unchanged — one row is exactly
+// one existing, fully-validated job-creation call, never a second/parallel
+// creation path or a second definition of what a valid job looks like.
+// Rows are processed sequentially (not Promise.all) so an in-batch
+// duplicate Job No is naturally caught by createJob()'s own "already
+// exists" check against whatever the previous row in this same batch just
+// inserted — no separate in-batch-dedup logic needed. A bad row never
+// blocks the good ones: each row succeeds or fails independently and both
+// outcomes are reported back, spreadsheet-import style.
+const BULK_IMPORT_ROW_LIMIT = 500;
+const BULK_IMPORT_FIELDS = ['insurer', 'insured', 'policy_no', 'policy_name', 'claim_no'];
+
+function normalizeBulkDate(raw, label) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return { value: '', error: null };
+  const s = String(raw).trim();
+  if (!EVENT_DATE_RE.test(s)) return { value: '', error: `${label} must be YYYY-MM-DD (got "${s}")` };
+  return { value: s, error: null };
+}
+
+function canBulkImportJobs(user) {
+  return isAdmin(user) || isDirectorRole(user);
+}
+
+async function bulkImportJobs(db, rows, user) {
+  if (!canBulkImportJobs(user)) throw new Error('Only an Admin or Director may bulk-import claims');
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('No rows to import');
+  if (rows.length > BULK_IMPORT_ROW_LIMIT) throw new Error(`Cannot import more than ${BULK_IMPORT_ROW_LIMIT} rows at once`);
+
+  const created = [];
+  const errors = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || {};
+    const rowNum = i + 1;
+    try {
+      const insured = (row.insured || '').trim();
+      if (!insured) throw new Error('Insured is required');
+
+      const dateLoss = normalizeBulkDate(row.date_loss, 'Date of Loss');
+      if (dateLoss.error) throw new Error(dateLoss.error);
+      const dateIntimation = normalizeBulkDate(row.date_intimation, 'Deputation Date');
+      if (dateIntimation.error) throw new Error(dateIntimation.error);
+
+      const jobBody = {
+        title: insured,
+        id: row.id ? String(row.id).trim() : undefined,
+        insured,
+        date_loss: dateLoss.value,
+        date_intimation: dateIntimation.value,
+        created_by: user.id,
+      };
+      for (const f of BULK_IMPORT_FIELDS) {
+        if (f === 'insured') continue; // already set above
+        jobBody[f] = (row[f] || '').trim();
+      }
+
+      const job = await createJob(db, jobBody);
+      created.push({ row: rowNum, job_id: job.id, insured });
+    } catch (e) {
+      errors.push({ row: rowNum, job_no: row.id || null, insured: row.insured || null, error: e.message });
+    }
+  }
+
+  return { created, errors, total: rows.length };
+}
+
 async function updateJob(db, id, body, user) {
   const existingRow = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
   if (!existingRow) throw new Error('job not found');
@@ -3230,6 +3297,11 @@ export default {
       if (pathname === '/api/jobs' && request.method === 'POST') {
         const body = await request.json();
         return json(await createJob(db, body), 201);
+      }
+
+      if (pathname === '/api/jobs/bulk-import' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await bulkImportJobs(db, body.rows, user), 201);
       }
 
       {

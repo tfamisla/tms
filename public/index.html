@@ -6,6 +6,7 @@
 <title>TMS · TFAM Live</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=DM+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 /* ── CONFIG: set your Worker URL after deploy ── */
 /* Edited in JS: const API = '...' below */
@@ -402,6 +403,18 @@ details.sp-section[open] summary{margin-bottom:0}
 .cc-job-main{font-weight:600}
 .cc-job-sub{font-size:11px;color:var(--text-faint)}
 
+/* ── BULK IMPORT CLAIMS ── */
+.form-error{color:var(--red);font-size:12.5px;margin-top:8px}
+.bi-summary{font-size:13px;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap}
+.bi-summary b{font-family:'DM Mono',monospace}
+.bi-preview-wrap{max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm)}
+.bi-table{width:100%;border-collapse:collapse;font-size:11.5px}
+.bi-table th{text-align:left;background:var(--ground);color:var(--text-faint);font-weight:600;padding:6px 8px;position:sticky;top:0;border-bottom:1px solid var(--border);white-space:nowrap}
+.bi-table td{padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+.bi-table tr.bi-row-error td{background:var(--red-bg);color:var(--red)}
+.bi-table tr.bi-row-ok td{color:var(--text-pri)}
+.bi-err-cell{white-space:normal!important;max-width:220px}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -454,6 +467,7 @@ details.sp-section[open] summary{margin-bottom:0}
     <span class="topbar-user" id="topbarUser"></span>
     <button class="btn-logout" onclick="logout()">Log out</button>
     <button class="btn-secondary" onclick="openTaskForm()">+ Add Task</button>
+    <button class="btn-secondary" id="bulkImportBtn" onclick="openBulkImport()" hidden>+ Bulk Import</button>
     <button class="btn-new" onclick="openNewJob()">+ New Job</button>
   </div>
 </div>
@@ -1418,6 +1432,45 @@ details.sp-section[open] summary{margin-bottom:0}
   </div>
 </div>
 
+<!-- ── BULK IMPORT CLAIMS (Excel/CSV) — Admin/Director only ── -->
+<div class="modal-overlay" id="bulkImportModal" hidden onclick="event.target===this&&closeBulkImport()">
+  <div class="modal" style="max-width:760px">
+    <div class="modal-hdr">
+      <h2>Bulk Import Claims</h2>
+      <button class="sp-close" onclick="closeBulkImport()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="bi-step-pick">
+        <p style="font-size:12.5px;color:var(--text-sec);margin-bottom:10px">
+          Upload an Excel (.xlsx) or CSV file with a header row. Recognized columns (any order, case-insensitive):
+          <strong>Job No, Insurer, Insured, Policy No, Policy Name, Claim No, Deputation Date, Loss Date</strong>.
+          Dates may be <code>YYYY-MM-DD</code> or <code>DD-MM-YYYY</code>. Only <strong>Insured</strong> is required — everything else may be left blank.
+        </p>
+        <button type="button" class="btn-secondary" onclick="downloadImportTemplate()">Download Template (CSV)</button>
+        <div style="margin-top:14px">
+          <input type="file" id="bi-file-input" accept=".xlsx,.xls,.csv" onchange="handleBulkImportFile(event)">
+        </div>
+        <div id="bi-parse-error" class="form-error" hidden></div>
+      </div>
+
+      <div id="bi-step-preview" hidden>
+        <div class="bi-summary" id="bi-summary"></div>
+        <div class="bi-preview-wrap" id="bi-preview-table"></div>
+      </div>
+
+      <div id="bi-step-results" hidden>
+        <div class="bi-summary" id="bi-results-summary"></div>
+        <div class="bi-preview-wrap" id="bi-results-table"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-primary" id="bi-import-btn" onclick="submitBulkImport()" hidden>Import Rows</button>
+      <button type="button" class="btn-secondary" id="bi-back-btn" onclick="resetBulkImport()" hidden>Choose Different File</button>
+      <button type="button" class="btn-secondary" onclick="closeBulkImport()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── ADD TASK MODAL (V1.2) ── -->
 <div class="modal-overlay" id="taskFormModal" hidden onclick="e=>e.target===this&&closeTaskForm()">
   <div class="modal">
@@ -1818,6 +1871,7 @@ function onLoggedIn() {
   document.getElementById('addStaffBtn').hidden = !isAdminUser();
   document.getElementById('addBranchBtn').hidden = !isAdminUser();
   document.getElementById('controlCentreNavBtn').hidden = !(isAdminUser() || /director/i.test(currentUserRecord.role || ''));
+  document.getElementById('bulkImportBtn').hidden = !(isAdminUser() || /director/i.test(currentUserRecord.role || ''));
   buildNewJobAssign();
   buildLogFilters();
   restoreAvailableMinutesFilter();
@@ -3293,6 +3347,209 @@ async function submitNewJob() {
     buildNewJobAssign();
   } catch(e) {
     alert('Error creating job: ' + e.message);
+  }
+}
+
+// ── BULK IMPORT CLAIMS (Excel/CSV) ──────────────────────────────
+// Admin/Director only, mirrors the Control Centre gating. Parsing happens
+// entirely client-side (SheetJS) purely to build a preview; the actual
+// validity of each row (Insured required, date format, duplicate Job No)
+// is decided authoritatively by the server's bulkImportJobs(), which
+// reuses the exact same createJob() every single-claim "+ New Job" call
+// already goes through — never a second job-creation code path.
+const BI_COLUMN_ALIASES = {
+  id: ['job no', 'job number', 'job id', 'jobno', 'job'],
+  insurer: ['insurer'],
+  insured: ['insured', 'insured name', 'name of insured'],
+  policy_no: ['policy no', 'policy number', 'policyno'],
+  policy_name: ['policy name'],
+  claim_no: ['claim no', 'claim number', 'claimno'],
+  date_intimation: ['deputation date', 'date of intimation', 'intimation date', 'date of deputation'],
+  date_loss: ['loss date', 'date of loss'],
+};
+const BI_COLUMN_LABELS = {
+  id: 'Job No', insurer: 'Insurer', insured: 'Insured', policy_no: 'Policy No', policy_name: 'Policy Name',
+  claim_no: 'Claim No', date_intimation: 'Deputation Date', date_loss: 'Loss Date',
+};
+let biParsedRows = [];
+
+function normHeader(h) { return String(h || '').trim().toLowerCase().replace(/[_\-.]+/g, ' ').replace(/\s+/g, ' '); }
+
+function biMapHeaders(headerRow) {
+  const map = {}; // column index -> field key
+  headerRow.forEach((h, i) => {
+    const norm = normHeader(h);
+    for (const [field, aliases] of Object.entries(BI_COLUMN_ALIASES)) {
+      if (aliases.includes(norm)) { map[i] = field; break; }
+    }
+  });
+  return map;
+}
+
+// Excel date cells arrive as JS Date objects (SheetJS with cellDates:true);
+// text cells arrive as strings, which may be ISO or India-convention
+// DD-MM-YYYY / DD/MM/YYYY. Anything else is passed through as-is so the
+// server's format check can reject it with a clear, specific error rather
+// than this silently guessing wrong.
+function biCellToDateString(v) {
+  if (v === undefined || v === null || v === '') return '';
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return '';
+    const y = v.getFullYear(), m = String(v.getMonth() + 1).padStart(2, '0'), d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // India convention: DD-MM-YYYY / DD/MM/YYYY — m[1]=day, m[2]=month, m[3]=year.
+  const m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return s;
+}
+
+function downloadImportTemplate() {
+  const headers = ['Job No', 'Insurer', 'Insured', 'Policy No', 'Policy Name', 'Claim No', 'Deputation Date', 'Loss Date'];
+  const sample = ['', 'ACME General Insurance', 'Kalyani Textiles', 'POL-12345', 'Fire Policy', 'CLM-98765', '2026-01-15', '2026-01-10'];
+  const csv = [headers, sample].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'tms-bulk-import-template.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function openBulkImport() {
+  if (!(isAdminUser() || (currentUserRecord && /director/i.test(currentUserRecord.role || '')))) return;
+  resetBulkImport();
+  document.getElementById('bulkImportModal').hidden = false;
+}
+function closeBulkImport() {
+  document.getElementById('bulkImportModal').hidden = true;
+}
+function resetBulkImport() {
+  biParsedRows = [];
+  document.getElementById('bi-step-pick').hidden = false;
+  document.getElementById('bi-step-preview').hidden = true;
+  document.getElementById('bi-step-results').hidden = true;
+  document.getElementById('bi-parse-error').hidden = true;
+  document.getElementById('bi-import-btn').hidden = true;
+  document.getElementById('bi-back-btn').hidden = true;
+  const fileInput = document.getElementById('bi-file-input');
+  if (fileInput) fileInput.value = '';
+}
+
+function biValidateRowClientSide(row) {
+  if (!(row.insured || '').trim()) return 'Insured is required';
+  for (const [field, label] of [['date_loss', 'Date of Loss'], ['date_intimation', 'Deputation Date']]) {
+    const v = row[field];
+    if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return `${label} must be YYYY-MM-DD or DD-MM-YYYY (got "${v}")`;
+  }
+  return null;
+}
+
+function handleBulkImportFile(evt) {
+  const file = evt.target.files[0];
+  const errEl = document.getElementById('bi-parse-error');
+  errEl.hidden = true;
+  if (!file) return;
+  if (typeof XLSX === 'undefined') {
+    errEl.textContent = 'The Excel-parsing library failed to load — check your internet connection and try again.';
+    errEl.hidden = false;
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
+      if (rows.length < 2) throw new Error('File has no data rows below the header.');
+      const headerMap = biMapHeaders(rows[0]);
+      if (Object.keys(headerMap).length === 0) throw new Error('No recognized column headers found. Check the first row matches the expected column names.');
+
+      const parsed = [];
+      for (let r = 1; r < rows.length; r++) {
+        const raw = rows[r];
+        if (!raw || raw.every(c => c === '' || c === undefined || c === null)) continue; // skip blank rows
+        const row = { id: '', insurer: '', insured: '', policy_no: '', policy_name: '', claim_no: '', date_intimation: '', date_loss: '' };
+        for (const [idx, field] of Object.entries(headerMap)) {
+          let v = raw[Number(idx)];
+          if (field === 'date_loss' || field === 'date_intimation') v = biCellToDateString(v);
+          row[field] = v === undefined || v === null ? '' : String(v).trim();
+        }
+        parsed.push(row);
+      }
+      if (parsed.length === 0) throw new Error('No data rows found after the header.');
+      biParsedRows = parsed;
+      renderBulkImportPreview();
+    } catch (err) {
+      errEl.textContent = 'Could not read file: ' + err.message;
+      errEl.hidden = false;
+    }
+  };
+  reader.onerror = () => { errEl.textContent = 'Could not read the selected file.'; errEl.hidden = false; };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderBulkImportPreview() {
+  document.getElementById('bi-step-pick').hidden = true;
+  document.getElementById('bi-step-preview').hidden = false;
+  document.getElementById('bi-import-btn').hidden = false;
+  document.getElementById('bi-back-btn').hidden = false;
+
+  const errors = biParsedRows.map(biValidateRowClientSide);
+  const validCount = errors.filter(e => !e).length;
+  document.getElementById('bi-summary').innerHTML =
+    `<span><b>${biParsedRows.length}</b> rows parsed</span>` +
+    `<span style="color:var(--green)"><b>${validCount}</b> look valid</span>` +
+    (validCount < biParsedRows.length ? `<span style="color:var(--red)"><b>${biParsedRows.length - validCount}</b> have issues (still submitted — the server will report them precisely)</span>` : '');
+
+  const cols = ['id', 'insurer', 'insured', 'policy_no', 'policy_name', 'claim_no', 'date_intimation', 'date_loss'];
+  const rowsHtml = biParsedRows.map((row, i) => {
+    const err = errors[i];
+    return `<tr class="${err ? 'bi-row-error' : 'bi-row-ok'}">
+      <td>${i + 1}</td>
+      ${cols.map(c => `<td>${esc(row[c] || '')}</td>`).join('')}
+      <td class="bi-err-cell">${err ? esc(err) : ''}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('bi-preview-table').innerHTML = `
+    <table class="bi-table">
+      <thead><tr><th>#</th>${cols.map(c => `<th>${esc(BI_COLUMN_LABELS[c])}</th>`).join('')}<th>Issue</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+}
+
+async function submitBulkImport() {
+  const btn = document.getElementById('bi-import-btn');
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+  try {
+    const result = await apiPost('/api/jobs/bulk-import', { rows: biParsedRows });
+    document.getElementById('bi-step-preview').hidden = true;
+    document.getElementById('bi-step-results').hidden = false;
+    document.getElementById('bi-import-btn').hidden = true;
+    document.getElementById('bi-back-btn').textContent = 'Import Another File';
+
+    document.getElementById('bi-results-summary').innerHTML =
+      `<span style="color:var(--green)"><b>${result.created.length}</b> created</span>` +
+      `<span style="color:var(--red)"><b>${result.errors.length}</b> failed</span>` +
+      `<span><b>${result.total}</b> total rows</span>`;
+
+    const createdHtml = result.created.map(c => `<tr class="bi-row-ok"><td>${c.row}</td><td>${esc(c.job_id)}</td><td>${esc(c.insured)}</td><td>Created</td></tr>`).join('');
+    const errorHtml = result.errors.map(e => `<tr class="bi-row-error"><td>${e.row}</td><td>${esc(e.job_no || '')}</td><td>${esc(e.insured || '')}</td><td class="bi-err-cell">${esc(e.error)}</td></tr>`).join('');
+    document.getElementById('bi-results-table').innerHTML = `
+      <table class="bi-table">
+        <thead><tr><th>Row</th><th>Job No</th><th>Insured</th><th>Result</th></tr></thead>
+        <tbody>${createdHtml}${errorHtml}</tbody>
+      </table>`;
+
+    if (result.created.length > 0) await fetchAll();
+  } catch (e) {
+    alert('Bulk import failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Import Rows';
   }
 }
 
