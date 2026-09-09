@@ -255,35 +255,50 @@ CREATE INDEX IF NOT EXISTS idx_claim_queries_job ON claim_queries (job_id);
 -- Total received/outstanding/excess/payment status/closure eligibility are
 -- all CALCULATED from bill_amount + fee_receipts, never stored — see
 -- computeBilling() in worker.js and index.html.
+-- V1.1A note: `bill_amount` and `billing_remarks` are superseded by
+-- `professional_fees`/`expenses` (Base Total/GST/Invoice Value are derived
+-- from those, never stored) and are no longer written by the frontend, but
+-- are kept as dormant/legacy columns for backward compatibility — no
+-- production billing data existed at the time of this change (confirmed
+-- via `SELECT COUNT(*) FROM job_billing` = 0), so there was nothing to
+-- migrate or reinterpret.
 CREATE TABLE IF NOT EXISTS job_billing (
-  job_id          TEXT    PRIMARY KEY,
-  bill_required   TEXT    NOT NULL DEFAULT 'to_be_decided',  -- 'yes'|'no'|'to_be_decided'
-  bill_date       TEXT    DEFAULT '',
-  bill_number     TEXT    DEFAULT '',
-  bill_amount     TEXT    DEFAULT '',   -- rupees, e.g. "50000" or "50000.50"
-  billing_remarks TEXT    DEFAULT '',
-  closure_date    TEXT    DEFAULT '',   -- only ever set via POST /api/jobs/:id/close
-  closed_by       TEXT    DEFAULT '',   -- staff id, derived server-side from the authenticated user
-  closure_remarks TEXT    DEFAULT '',
-  updated_at      INTEGER NOT NULL,
+  job_id            TEXT    PRIMARY KEY,
+  bill_required     TEXT    NOT NULL DEFAULT 'to_be_decided',  -- 'yes'|'no'|'to_be_decided'
+  bill_date         TEXT    DEFAULT '',
+  bill_number       TEXT    DEFAULT '',
+  bill_amount       TEXT    DEFAULT '',   -- legacy/dormant (V1.1) — superseded by professional_fees+expenses
+  professional_fees TEXT    DEFAULT '',   -- rupees (V1.1A) — TFAM invoice: Professional Fees
+  expenses          TEXT    DEFAULT '',   -- rupees (V1.1A) — TFAM invoice: Expenses
+  billing_remarks   TEXT    DEFAULT '',   -- legacy/dormant (V1.1) — removed from active UI in V1.1A
+  closure_date      TEXT    DEFAULT '',   -- only ever set via POST /api/jobs/:id/close
+  closed_by         TEXT    DEFAULT '',   -- staff id, derived server-side from the authenticated user
+  closure_remarks   TEXT    DEFAULT '',
+  updated_at        INTEGER NOT NULL,
   FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
 
--- ── Fee Receipts (V1.1) ──────────────────────────────────────
--- One job -> many fee receipts, unlimited. Total received/outstanding/
--- excess/payment status are always calculated from these + job_billing.bill_amount,
--- never stored.
+-- ── Fee Receipts (V1.1, extended V1.1A) ─────────────────────────
+-- One job -> many fee receipts, unlimited. `amount` = Received Amount,
+-- `reference_no` = UTR/Reference (both reused from V1.1, not duplicated).
+-- `tds_deduction`/`writeoff_amount` are always manual entry — TMS never
+-- calculates or assumes a TDS percentage or write-off amount. Total
+-- Received/TDS/Write-off/Accounted/Outstanding/Payment Status/Closure
+-- Eligibility are always calculated from these + job_billing's invoice
+-- fields, never stored.
 CREATE TABLE IF NOT EXISTS fee_receipts (
-  id            TEXT    PRIMARY KEY,
-  job_id        TEXT    NOT NULL,
-  receipt_date  TEXT    NOT NULL,
-  amount        TEXT    NOT NULL,   -- rupees, e.g. "20000" or "20000.50"
-  receipt_mode  TEXT    DEFAULT '',   -- 'NEFT / RTGS'|'UPI'|'Cheque'|'Cash'|'Bank Transfer'|'Adjustment'|'Other'
-  reference_no  TEXT    DEFAULT '',
-  remarks       TEXT    DEFAULT '',
-  created_by    TEXT    DEFAULT '',
-  created_at    INTEGER NOT NULL,
-  updated_at    INTEGER NOT NULL,
+  id              TEXT    PRIMARY KEY,
+  job_id          TEXT    NOT NULL,
+  receipt_date    TEXT    NOT NULL,
+  amount          TEXT    NOT NULL,               -- Received Amount, rupees, e.g. "20000" or "20000.50"
+  tds_deduction   TEXT    NOT NULL DEFAULT '0',    -- rupees; manual entry only, never calculated (V1.1A)
+  writeoff_amount TEXT    NOT NULL DEFAULT '0',    -- rupees; manual entry only, never calculated (V1.1A)
+  receipt_mode    TEXT    DEFAULT '',   -- 'NEFT / RTGS'|'UPI'|'Cheque'|'Cash'|'Bank Transfer'|'Adjustment'|'Other'
+  reference_no    TEXT    DEFAULT '',   -- UTR / Reference / Cheque No.
+  remarks         TEXT    DEFAULT '',
+  created_by      TEXT    DEFAULT '',
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL,
   FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_fee_receipts_job ON fee_receipts (job_id);

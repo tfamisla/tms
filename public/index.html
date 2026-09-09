@@ -964,8 +964,19 @@ details.sp-section[open] summary{margin-bottom:0}
           <input id="frf-date" type="date">
         </div>
         <div class="form-field">
-          <label>Amount Received (₹) *</label>
-          <input id="frf-amount" inputmode="decimal">
+          <label>Received Amount (₹)</label>
+          <input id="frf-amount" inputmode="decimal" value="0">
+        </div>
+        <div class="form-field">
+          <label>TDS Deduction (₹)</label>
+          <input id="frf-tds" inputmode="decimal" value="0">
+        </div>
+        <div class="form-field">
+          <label>Write-off Amount (₹)</label>
+          <input id="frf-writeoff" inputmode="decimal" value="0">
+        </div>
+        <div class="form-field full" style="font-size:12px;color:var(--text-faint)">
+          At least one of Received Amount, TDS Deduction, or Write-off Amount must be greater than zero. TDS and Write-off are always manual entry — TMS never calculates or assumes these.
         </div>
         <div class="form-field">
           <label>Receipt Mode</label>
@@ -980,7 +991,7 @@ details.sp-section[open] summary{margin-bottom:0}
           </select>
         </div>
         <div class="form-field">
-          <label>Reference / UTR / Cheque No.</label>
+          <label>UTR / Reference / Cheque No.</label>
           <input id="frf-reference" class="mono">
         </div>
         <div class="form-field full">
@@ -1627,8 +1638,8 @@ function buildJobPanel(j) {
       <div><strong>Hard Copy</strong><br>${hardCopyLine(j)}</div>
       <div><strong>POD</strong><br>${podLine(j)}</div>
       <div><strong>Queries</strong><br>${j.open_query_count?`${j.open_query_count} Open`:'None Open'}</div>
-      <div><strong>Bill</strong><br>${j.bill_required==='no'?'Not Required':j.bill_required==='to_be_decided'?'To Be Decided':(j.billing?.bill_amount_paise?formatINR(j.billing.bill_amount_paise)+(j.bill_date?' — '+j.bill_date:''):'Pending')}</div>
-      <div><strong>Fee Received</strong><br>${formatINR(j.billing?.total_received_paise||0)}</div>
+      <div><strong>Bill</strong><br>${j.bill_required==='no'?'Not Required':j.bill_required==='to_be_decided'?'To Be Decided':(j.billing?.invoice_total_paise?formatINR(j.billing.invoice_total_paise)+(j.bill_date?' — '+j.bill_date:''):'Pending')}</div>
+      <div><strong>Accounted</strong><br>${formatINR(j.billing?.accounted_paise||0)}</div>
       <div><strong>Outstanding</strong><br>${formatINR(j.billing?.outstanding_paise||0)}${j.billing?.excess_paise?` (Excess ${formatINR(j.billing.excess_paise)})`:''}</div>
       <div><strong>Payment</strong><br><span style="color:${PAYMENT_STATUS_COLORS[j.billing?.payment_status]||'inherit'}">${PAYMENT_STATUS_LABELS[j.billing?.payment_status]||'—'}</span></div>
       <div><strong>Closure</strong><br>${j.stage==='closed'?`Closed${j.closure_date?' — '+j.closure_date:''}`:(j.billing?.closure_eligible?'<span style="color:var(--green)">Eligible</span>':'Not Eligible')}</div>
@@ -1664,7 +1675,6 @@ function buildJobPanel(j) {
         </select>
       </div>
       <div class="sp-field"><label>ILA Issue Date</label><input type="date" id="sp-f-ila-issue-date" value="${j.ila_issue_date||''}"></div>
-      <div class="sp-field sp-field-full"><label>ILA Remarks</label><input id="sp-f-ila-remarks" value="${esc(j.ila_remarks||'')}"></div>
 
       <div class="modal-subsection-label">Letter of Requirement (LOR)</div>
       <div class="sp-field"><label>LOR Required</label>
@@ -1682,7 +1692,6 @@ function buildJobPanel(j) {
         </select>
       </div>
       <div class="sp-field"><label>LOR Issue Date</label><input type="date" id="sp-f-lor-issue-date" value="${j.lor_issue_date||''}"></div>
-      <div class="sp-field sp-field-full"><label>LOR Remarks</label><input id="sp-f-lor-remarks" value="${esc(j.lor_remarks||'')}"></div>
     </div>
   </details>
 
@@ -1700,7 +1709,6 @@ function buildJobPanel(j) {
       </div>
       <div class="sp-field"><label>Assessment Preparation Date</label><input type="date" id="sp-f-assessment-date" value="${j.assessment_prepared_date||''}"></div>
       <div class="sp-field"><label>Assessed Loss Amount (₹)</label><input id="sp-f-assessed-amount" inputmode="decimal" value="${esc(j.assessed_amount||'')}"></div>
-      <div class="sp-field sp-field-full"><label>Assessment Remarks</label><input id="sp-f-assessment-remarks" value="${esc(j.assessment_remarks||'')}"></div>
     </div>
   </details>
 
@@ -1745,8 +1753,6 @@ function buildJobPanel(j) {
         </select>
       </div>
       <div class="sp-field" id="sp-ia-date-wrap"><label>Insurer Approval Date</label><input type="date" id="sp-f-ia-date" value="${j.insurer_approval_date||''}"></div>
-      <div class="sp-field" id="sp-ia-amount-wrap"><label>Insurer Approved Amount (₹)</label><input id="sp-f-ia-amount" inputmode="decimal" value="${esc(j.insurer_approved_amount||'')}"></div>
-      <div class="sp-field sp-field-full" id="sp-ia-remarks-wrap"><label>Insurer Approval Remarks</label><input id="sp-f-ia-remarks" value="${esc(j.insurer_approval_remarks||'')}"></div>
       <div class="sp-field-full" id="sp-ia-not-required-note" style="font-size:12px;color:var(--text-faint)${j.insurer_approval_required==='yes'?';display:none':''}">
         ${j.insurer_approval_required==='no' ? 'Insurer Approval: Not Required.' : j.insurer_approval_required==='to_be_decided' ? 'Insurer Approval Requirement: To Be Decided.' : ''}
       </div>
@@ -1763,8 +1769,6 @@ function buildJobPanel(j) {
         </select>
       </div>
       <div class="sp-field"><label>Consent Date</label><input type="date" id="sp-f-ic-date" value="${j.insured_consent_date||''}"></div>
-      <div class="sp-field"><label>Agreed Amount (₹)</label><input id="sp-f-ic-amount" inputmode="decimal" value="${esc(j.insured_agreed_amount||'')}"></div>
-      <div class="sp-field sp-field-full"><label>Consent Remarks</label><input id="sp-f-ic-remarks" value="${esc(j.insured_consent_remarks||'')}"></div>
       ${j.insurer_approval_required==='yes' && !['approved','partially_approved'].includes(j.insurer_approval_status) ? '<div class="sp-field-full" style="font-size:12px;color:var(--amber)">⚠ Insurer Approval is still pending.</div>' : ''}
     </div>
   </details>
@@ -1847,7 +1851,6 @@ function buildJobPanel(j) {
         </select>
       </div>
       <div class="sp-field"><label>Mail Sent Date</label><input type="date" id="sp-f-mail-sent-date" value="${j.mail_sent_date||''}"></div>
-      <div class="sp-field sp-field-full"><label>Submission Remarks</label><input id="sp-f-fsr-submission-remarks" value="${esc(j.fsr_submission_remarks||'')}"></div>
       ${fsrSubmissionReadinessWarning(j) ? `<div class="sp-field-full" style="font-size:12px;color:var(--amber)">⚠ ${esc(fsrSubmissionReadinessWarning(j))}</div>` : '<div class="sp-field-full" style="font-size:12px;color:var(--green)">✓ Ready to submit.</div>'}
     </div>
   </details>
@@ -1876,7 +1879,6 @@ function buildJobPanel(j) {
       <div class="sp-field" id="sp-hc-date-wrap"><label>Hard Copy Sent Date</label><input type="date" id="sp-f-hc-date" value="${j.hard_copy_sent_date||''}"></div>
       <div class="sp-field" id="sp-hc-courier-wrap"><label>Courier Company</label><input id="sp-f-hc-courier" value="${esc(j.courier_company||'')}" placeholder="e.g. DTDC, Blue Dart, Hand Delivery"></div>
       <div class="sp-field" id="sp-hc-awb-wrap"><label>AWB / Tracking Number</label><input id="sp-f-hc-awb" class="mono" value="${esc(j.awb_tracking_no||'')}"></div>
-      <div class="sp-field sp-field-full" id="sp-hc-remarks-wrap"><label>Dispatch Remarks</label><input id="sp-f-hc-remarks" value="${esc(j.dispatch_remarks||'')}"></div>
 
       <div class="modal-subsection-label" id="sp-pod-label-wrap">Proof of Delivery (POD)</div>
       <div class="sp-field" id="sp-pod-status-wrap"><label>POD Status</label>
@@ -1888,7 +1890,6 @@ function buildJobPanel(j) {
         </select>
       </div>
       <div class="sp-field" id="sp-pod-date-wrap"><label>POD Date</label><input type="date" id="sp-f-pod-date" value="${j.pod_date||''}"></div>
-      <div class="sp-field sp-field-full" id="sp-pod-remarks-wrap"><label>POD Remarks</label><input id="sp-f-pod-remarks" value="${esc(j.pod_remarks||'')}"></div>
     </div>
   </details>
 
@@ -1896,7 +1897,7 @@ function buildJobPanel(j) {
   <details class="sp-section">
     <summary class="sp-section-label" style="cursor:pointer">Billing &amp; Closure</summary>
     <div class="sp-grid" style="margin-top:10px">
-      <div class="modal-subsection-label">Bill Details</div>
+      <div class="modal-subsection-label">Invoice Details</div>
       <div class="sp-field"><label>Bill Required?</label>
         <select id="sp-f-bill-required" onchange="toggleBillFields()">
           <option value="to_be_decided" ${j.bill_required==='to_be_decided'?'selected':''}>To Be Decided</option>
@@ -1909,15 +1910,24 @@ function buildJobPanel(j) {
       </div>
       <div class="sp-field" id="sp-bill-date-wrap"><label>Bill Date</label><input type="date" id="sp-f-bill-date" value="${j.bill_date||''}"></div>
       <div class="sp-field" id="sp-bill-number-wrap"><label>Bill Number</label><input id="sp-f-bill-number" value="${esc(j.bill_number||'')}"></div>
-      <div class="sp-field" id="sp-bill-amount-wrap"><label>Bill Amount (₹)</label><input id="sp-f-bill-amount" inputmode="decimal" value="${esc(j.bill_amount||'')}"></div>
-      <div class="sp-field sp-field-full" id="sp-bill-remarks-wrap"><label>Billing Remarks</label><input id="sp-f-billing-remarks" value="${esc(j.billing_remarks||'')}"></div>
+      <div class="sp-field" id="sp-bill-fees-wrap"><label>Professional Fees (₹)</label><input id="sp-f-bill-fees" inputmode="decimal" value="${esc(j.professional_fees||'')}" oninput="updateInvoicePreview()"></div>
+      <div class="sp-field" id="sp-bill-expenses-wrap"><label>Expenses (₹)</label><input id="sp-f-bill-expenses" inputmode="decimal" value="${esc(j.expenses||'')}" oninput="updateInvoicePreview()"></div>
+      <div class="sp-field-full" id="sp-bill-calc-wrap">
+        <div class="progress-grid">
+          <div><strong>Base Total</strong><br><span id="sp-bill-base-total">${formatINR(j.billing?.base_total_paise||0)}</span></div>
+          <div><strong>GST @ 18%</strong><br><span id="sp-bill-gst">${formatINR(j.billing?.gst_paise||0)}</span></div>
+          <div><strong>Total Invoice Value</strong><br><span id="sp-bill-invoice-total">${formatINR(j.billing?.invoice_total_paise||0)}</span></div>
+        </div>
+      </div>
 
       <div class="modal-subsection-label">Payment Summary (calculated)</div>
       <div class="progress-grid" style="grid-column:1/-1">
-        <div><strong>Bill Amount</strong><br>${formatINR(j.billing?.bill_amount_paise||0)}</div>
-        <div><strong>Total Received</strong><br>${formatINR(j.billing?.total_received_paise||0)}</div>
-        <div><strong>Outstanding</strong><br>${formatINR(j.billing?.outstanding_paise||0)}</div>
-        <div><strong>Excess</strong><br>${formatINR(j.billing?.excess_paise||0)}</div>
+        <div><strong>Invoice Value</strong><br>${formatINR(j.billing?.invoice_total_paise||0)}</div>
+        <div><strong>Received</strong><br>${formatINR(j.billing?.received_paise||0)}</div>
+        <div><strong>TDS</strong><br>${formatINR(j.billing?.tds_paise||0)}</div>
+        <div><strong>Write-off</strong><br>${formatINR(j.billing?.writeoff_paise||0)}</div>
+        <div><strong>Total Accounted</strong><br>${formatINR(j.billing?.accounted_paise||0)}</div>
+        <div><strong>Outstanding</strong><br>${formatINR(j.billing?.outstanding_paise||0)}${j.billing?.excess_paise?` (Excess ${formatINR(j.billing.excess_paise)})`:''}</div>
         <div><strong>Payment Status</strong><br><span style="color:${PAYMENT_STATUS_COLORS[j.billing?.payment_status]||'inherit'}">${PAYMENT_STATUS_LABELS[j.billing?.payment_status]||'—'}</span></div>
         <div><strong>Closure Eligibility</strong><br>${j.stage==='closed'?'Closed':(j.billing?.closure_eligible?'<span style="color:var(--green)">Eligible</span>':'Not Eligible')}</div>
       </div>
@@ -2107,10 +2117,10 @@ async function saveJob() {
   if (gv('sp-f-ic-status') === 'accepted' && !gv('sp-f-ic-date')) {
     alert('Insured Consent Date is required when status is Accepted.'); return;
   }
-  for (const [id, label] of [['sp-f-assessed-amount','Assessed Loss Amount'],['sp-f-ia-amount','Insurer Approved Amount'],['sp-f-ic-amount','Insured Agreed Amount']]) {
-    const v = gv(id);
+  {
+    const v = gv('sp-f-assessed-amount');
     if (v && (isNaN(Number(v.replace(/,/g,''))) || Number(v.replace(/,/g,'')) < 0)) {
-      alert(`${label} must be a non-negative number.`); return;
+      alert('Assessed Loss Amount must be a non-negative number.'); return;
     }
   }
 
@@ -2130,30 +2140,31 @@ async function saveJob() {
     alert('POD Date is required when POD Status is Delivered.'); return;
   }
 
-  // ── Billing (V1.1) — Bill Required=Yes only demands date+positive amount
-  // once the bill is actually being entered (either field non-blank).
-  if (gv('sp-f-bill-required') === 'yes' && (gv('sp-f-bill-date') || gv('sp-f-bill-amount'))) {
-    if (!gv('sp-f-bill-date')) { alert('Bill Date is required once the bill is generated.'); return; }
-    if (!isPositiveAmount(gv('sp-f-bill-amount'))) { alert('Bill Amount must be a positive number once the bill is generated.'); return; }
-  } else if (gv('sp-f-bill-amount') && !isPositiveAmount(gv('sp-f-bill-amount')) && Number(gv('sp-f-bill-amount').replace(/,/g,'')) < 0) {
-    alert('Bill Amount must be a non-negative number.'); return;
+  // ── Billing (V1.1A) — Bill Required=Yes only demands Date + a positive
+  // Professional Fees once the invoice is actually being entered (any of
+  // Date/Professional Fees/Expenses non-blank). Expenses may be zero.
+  const enteringInvoice = !!(gv('sp-f-bill-date') || gv('sp-f-bill-fees') || gv('sp-f-bill-expenses'));
+  if (gv('sp-f-bill-required') === 'yes' && enteringInvoice) {
+    if (!gv('sp-f-bill-date')) { alert('Bill Date is required once the invoice is generated.'); return; }
+    if (!isPositiveAmount(gv('sp-f-bill-fees'))) { alert('Professional Fees must be a positive number once the invoice is generated.'); return; }
+    if (gv('sp-f-bill-expenses') && Number(gv('sp-f-bill-expenses').replace(/,/g,'')) < 0) { alert('Expenses must be a non-negative number.'); return; }
+  } else {
+    if (gv('sp-f-bill-fees') && Number(gv('sp-f-bill-fees').replace(/,/g,'')) < 0) { alert('Professional Fees must be a non-negative number.'); return; }
+    if (gv('sp-f-bill-expenses') && Number(gv('sp-f-bill-expenses').replace(/,/g,'')) < 0) { alert('Expenses must be a non-negative number.'); return; }
   }
 
   const MILESTONE_FIELD_MAP = [
     ['sp-f-ila-required', 'ila_required', 'ILA Required', REQUIRED_LABELS],
     ['sp-f-ila-issued', 'ila_issued', 'ILA Issued', {yes:'Yes',no:'No'}],
     ['sp-f-ila-issue-date', 'ila_issue_date', 'ILA Issue Date'],
-    ['sp-f-ila-remarks', 'ila_remarks', 'ILA Remarks'],
     ['sp-f-lor-required', 'lor_required', 'LOR Required', REQUIRED_LABELS],
     ['sp-f-lor-issued', 'lor_issued', 'LOR Issued', {yes:'Yes',no:'No'}],
     ['sp-f-lor-issue-date', 'lor_issue_date', 'LOR Issue Date'],
-    ['sp-f-lor-remarks', 'lor_remarks', 'LOR Remarks'],
     ['sp-f-reminder-frequency', 'reminder_frequency', 'Reminder Frequency', REMINDER_FREQUENCY_LABELS],
     ['sp-f-reminder-frequency-custom', 'reminder_frequency_custom_days', 'Reminder Frequency (custom days)'],
     ['sp-f-assessment-status', 'assessment_status', 'Assessment Status', ASSESSMENT_STATUS_LABELS],
     ['sp-f-assessment-date', 'assessment_prepared_date', 'Assessment Preparation Date'],
     ['sp-f-assessed-amount', 'assessed_amount', 'Assessed Loss Amount'],
-    ['sp-f-assessment-remarks', 'assessment_remarks', 'Assessment Remarks'],
     ['sp-f-dv-status', 'director_verification_status', 'Director Verification Status', DIRECTOR_VERIFICATION_LABELS],
     ['sp-f-dv-date', 'director_verification_date', 'Director Verification Date'],
     ['sp-f-dv-by', 'director_verified_by', 'Verified By', Object.fromEntries(TEAM.map(m=>[m.id,m.name]))],
@@ -2161,12 +2172,8 @@ async function saveJob() {
     ['sp-f-ia-required', 'insurer_approval_required', 'Insurer Approval Required', REQUIRED_LABELS],
     ['sp-f-ia-status', 'insurer_approval_status', 'Insurer Approval Status', INSURER_APPROVAL_STATUS_LABELS],
     ['sp-f-ia-date', 'insurer_approval_date', 'Insurer Approval Date'],
-    ['sp-f-ia-amount', 'insurer_approved_amount', 'Insurer Approved Amount'],
-    ['sp-f-ia-remarks', 'insurer_approval_remarks', 'Insurer Approval Remarks'],
     ['sp-f-ic-status', 'insured_consent_status', 'Insured Consent Status', INSURED_CONSENT_LABELS],
     ['sp-f-ic-date', 'insured_consent_date', 'Insured Consent Date'],
-    ['sp-f-ic-amount', 'insured_agreed_amount', 'Insured Agreed Amount'],
-    ['sp-f-ic-remarks', 'insured_consent_remarks', 'Insured Consent Remarks'],
     ['sp-f-fsr-status', 'fsr_preparation_status', 'FSR Preparation Status', FSR_PREP_LABELS],
     ['sp-f-fsr-date', 'fsr_preparation_date', 'FSR Preparation Date'],
     ['sp-f-fsr-remarks', 'fsr_preparation_remarks', 'FSR Preparation Remarks'],
@@ -2177,22 +2184,19 @@ async function saveJob() {
     ['sp-f-fsr-submitted', 'fsr_submitted', 'FSR Submitted', {yes:'Yes',no:'No'}],
     ['sp-f-fsr-submission-date', 'fsr_submission_date', 'FSR Submission Date'],
     ['sp-f-fsr-submission-mode', 'fsr_submission_mode', 'FSR Submission Mode'],
-    ['sp-f-fsr-submission-remarks', 'fsr_submission_remarks', 'FSR Submission Remarks'],
     ['sp-f-mail-sent-date', 'mail_sent_date', 'Mail Sent Date'],
     ['sp-f-hc-required', 'hard_copy_required', 'Hard Copy Required', REQUIRED_LABELS],
     ['sp-f-hc-sent', 'hard_copy_sent', 'Hard Copy Sent', {yes:'Yes',no:'No'}],
     ['sp-f-hc-date', 'hard_copy_sent_date', 'Hard Copy Sent Date'],
     ['sp-f-hc-courier', 'courier_company', 'Courier Company'],
     ['sp-f-hc-awb', 'awb_tracking_no', 'AWB / Tracking Number'],
-    ['sp-f-hc-remarks', 'dispatch_remarks', 'Dispatch Remarks'],
     ['sp-f-pod-status', 'pod_status', 'POD Status', POD_STATUS_LABELS],
     ['sp-f-pod-date', 'pod_date', 'POD Date'],
-    ['sp-f-pod-remarks', 'pod_remarks', 'POD Remarks'],
     ['sp-f-bill-required', 'bill_required', 'Bill Required', REQUIRED_LABELS],
     ['sp-f-bill-date', 'bill_date', 'Bill Date'],
     ['sp-f-bill-number', 'bill_number', 'Bill Number'],
-    ['sp-f-bill-amount', 'bill_amount', 'Bill Amount'],
-    ['sp-f-billing-remarks', 'billing_remarks', 'Billing Remarks'],
+    ['sp-f-bill-fees', 'professional_fees', 'Professional Fees'],
+    ['sp-f-bill-expenses', 'expenses', 'Expenses'],
   ];
   for (const [domId, key, label, valueLabels] of MILESTONE_FIELD_MAP) {
     const el = document.getElementById(domId);
@@ -2223,13 +2227,17 @@ async function saveJob() {
     } else if (key === 'pod_status' && val === 'delivered') {
       const podDate = gv('sp-f-pod-date') || j.pod_date;
       actEntries.push({ text: `POD marked Delivered${podDate ? ' on ' + podDate : ''}.`, ts: Date.now(), actor });
-    } else if (key === 'bill_amount' && val) {
+    } else if (key === 'professional_fees' && val) {
       if (!oldVal) {
         const billNo = gv('sp-f-bill-number');
-        actEntries.push({ text: `Bill generated — ${formatINR(toPaise(val))}${billNo ? ' — Bill No. ' + billNo : ''}.`, ts: Date.now(), actor });
+        const baseTotalPaise = toPaise(val) + toPaise(gv('sp-f-bill-expenses'));
+        const invoiceTotalPaise = baseTotalPaise + Math.round(baseTotalPaise * 0.18);
+        actEntries.push({ text: `Invoice created — Bill ${billNo || '(no number)'} — ${formatINR(invoiceTotalPaise)}.`, ts: Date.now(), actor });
       } else {
-        actEntries.push({ text: `Bill amount changed from ${formatINR(toPaise(oldVal))} to ${formatINR(toPaise(val))}.`, ts: Date.now(), actor });
+        actEntries.push({ text: `Professional Fees changed from ${formatINR(toPaise(oldVal))} to ${formatINR(toPaise(val))}.`, ts: Date.now(), actor });
       }
+    } else if (key === 'expenses') {
+      actEntries.push({ text: `Expenses changed from ${formatINR(toPaise(oldVal||0))} to ${formatINR(toPaise(val||0))}.`, ts: Date.now(), actor });
     } else {
       actEntries.push({ text: `${who} changed ${label} from ${disp(oldVal)} to ${disp(val)}.`, ts: Date.now(), actor });
     }
@@ -2700,7 +2708,7 @@ function ilaLorLine(required, issued, date) {
 function toggleInsurerApprovalFields() {
   const required = document.getElementById('sp-f-ia-required').value;
   const show = required === 'yes';
-  ['sp-ia-status-wrap', 'sp-ia-date-wrap', 'sp-ia-amount-wrap', 'sp-ia-remarks-wrap'].forEach(id => {
+  ['sp-ia-status-wrap', 'sp-ia-date-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = show ? '' : 'none';
   });
@@ -2756,8 +2764,8 @@ function fsrSubmissionReadinessWarning(j) {
 function toggleHardCopyFields() {
   const required = document.getElementById('sp-f-hc-required').value;
   const show = required === 'yes';
-  ['sp-hc-sent-wrap', 'sp-hc-date-wrap', 'sp-hc-courier-wrap', 'sp-hc-awb-wrap', 'sp-hc-remarks-wrap',
-   'sp-pod-label-wrap', 'sp-pod-status-wrap', 'sp-pod-date-wrap', 'sp-pod-remarks-wrap'].forEach(id => {
+  ['sp-hc-sent-wrap', 'sp-hc-date-wrap', 'sp-hc-courier-wrap', 'sp-hc-awb-wrap',
+   'sp-pod-label-wrap', 'sp-pod-status-wrap', 'sp-pod-date-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = show ? '' : 'none';
   });
@@ -2791,7 +2799,7 @@ function formatINR(paise) {
 const PAYMENT_STATUS_LABELS = {
   to_be_decided: 'Billing Requirement To Be Decided', not_required: 'Bill Not Required',
   bill_pending: 'Bill Pending', unpaid: 'Unpaid', part_payment: 'Part Payment',
-  fully_paid: 'Fully Paid', excess_received: 'Excess Received',
+  fully_paid: 'Fully Settled', excess_received: 'Excess Accounted',
 };
 const PAYMENT_STATUS_COLORS = {
   to_be_decided: 'var(--text-faint)', not_required: 'var(--text-faint)', bill_pending: 'var(--text-faint)',
@@ -2799,40 +2807,56 @@ const PAYMENT_STATUS_COLORS = {
 };
 const FEE_RECEIPT_MODES = ['NEFT / RTGS', 'UPI', 'Cheque', 'Cash', 'Bank Transfer', 'Adjustment', 'Other'];
 
-function computeBilling(job, totalReceivedPaise) {
+// TFAM invoice structure (V1.1A) — Base Total / GST / Total Invoice Value
+// are always derived from Professional Fees + Expenses, never stored or
+// user-editable. GST is fixed at 18% — no rate selector, no manual GST entry.
+function computeInvoiceTotals(job) {
+  const professionalFeesPaise = toPaise(job.professional_fees);
+  const expensesPaise = toPaise(job.expenses);
+  const baseTotalPaise = professionalFeesPaise + expensesPaise;
+  const gstPaise = Math.round(baseTotalPaise * 0.18);
+  const invoiceTotalPaise = baseTotalPaise + gstPaise;
+  return { professionalFeesPaise, expensesPaise, baseTotalPaise, gstPaise, invoiceTotalPaise };
+}
+
+// Mirrors worker.js's computeBilling() exactly. Settlement = Received + TDS
+// Deducted + Write-off — TDS and Write-off are always manual entry, TMS
+// never calculates or assumes a TDS percentage or write-off amount.
+function computeBilling(job, sums) {
+  const { receivedPaise, tdsPaise, writeoffPaise } = sums;
   const billRequired = job.bill_required || 'to_be_decided';
-  const billAmountPaise = toPaise(job.bill_amount);
+  const invoice = computeInvoiceTotals(job);
+  const accountedPaise = receivedPaise + tdsPaise + writeoffPaise;
   let paymentStatus = 'to_be_decided';
   let outstandingPaise = 0;
   let excessPaise = 0;
   let financiallyEligible = false;
+  const invoiceComplete = !!job.bill_date && invoice.baseTotalPaise > 0;
 
   if (billRequired === 'no') {
     paymentStatus = 'not_required';
     financiallyEligible = true;
   } else if (billRequired === 'to_be_decided') {
     paymentStatus = 'to_be_decided';
+  } else if (!invoiceComplete) {
+    paymentStatus = 'bill_pending';
+  } else if (accountedPaise === 0) {
+    paymentStatus = 'unpaid';
+    outstandingPaise = invoice.invoiceTotalPaise;
+  } else if (accountedPaise < invoice.invoiceTotalPaise) {
+    paymentStatus = 'part_payment';
+    outstandingPaise = invoice.invoiceTotalPaise - accountedPaise;
+  } else if (accountedPaise === invoice.invoiceTotalPaise) {
+    paymentStatus = 'fully_paid';
+    financiallyEligible = true;
   } else {
-    if (!job.bill_date || billAmountPaise <= 0) {
-      paymentStatus = 'bill_pending';
-    } else if (totalReceivedPaise === 0) {
-      paymentStatus = 'unpaid';
-      outstandingPaise = billAmountPaise;
-    } else if (totalReceivedPaise < billAmountPaise) {
-      paymentStatus = 'part_payment';
-      outstandingPaise = billAmountPaise - totalReceivedPaise;
-    } else if (totalReceivedPaise === billAmountPaise) {
-      paymentStatus = 'fully_paid';
-      financiallyEligible = true;
-    } else {
-      paymentStatus = 'excess_received';
-      excessPaise = totalReceivedPaise - billAmountPaise;
-      financiallyEligible = true;
-    }
+    paymentStatus = 'excess_received';
+    excessPaise = accountedPaise - invoice.invoiceTotalPaise;
+    financiallyEligible = true;
   }
 
   const closureEligible = financiallyEligible && job.fsr_submitted === 'yes';
-  return { billRequired, billAmountPaise, totalReceivedPaise, outstandingPaise, excessPaise, paymentStatus, closureEligible };
+  return { billRequired, ...invoice, receivedPaise, tdsPaise, writeoffPaise, accountedPaise, outstandingPaise, excessPaise, paymentStatus, closureEligible };
 }
 
 function canCloseJobs() {
@@ -2842,7 +2866,7 @@ function canCloseJobs() {
 function toggleBillFields() {
   const required = document.getElementById('sp-f-bill-required').value;
   const show = required === 'yes';
-  ['sp-bill-date-wrap', 'sp-bill-number-wrap', 'sp-bill-amount-wrap', 'sp-bill-remarks-wrap'].forEach(id => {
+  ['sp-bill-date-wrap', 'sp-bill-number-wrap', 'sp-bill-fees-wrap', 'sp-bill-expenses-wrap', 'sp-bill-calc-wrap'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = show ? '' : 'none';
   });
@@ -2852,6 +2876,22 @@ function toggleBillFields() {
     note.textContent = required === 'no' ? 'Bill: Not Required.'
       : required === 'to_be_decided' ? 'Billing Requirement: To Be Decided.' : '';
   }
+  if (show) updateInvoicePreview();
+}
+
+// Live-updates Base Total / GST @ 18% / Total Invoice Value as Professional
+// Fees or Expenses change — the server independently recalculates these on
+// save, this is display-only.
+function updateInvoicePreview() {
+  const fees = document.getElementById('sp-f-bill-fees')?.value || '';
+  const expenses = document.getElementById('sp-f-bill-expenses')?.value || '';
+  const { baseTotalPaise, gstPaise, invoiceTotalPaise } = computeInvoiceTotals({ professional_fees: fees, expenses });
+  const baseEl = document.getElementById('sp-bill-base-total');
+  const gstEl = document.getElementById('sp-bill-gst');
+  const totalEl = document.getElementById('sp-bill-invoice-total');
+  if (baseEl) baseEl.textContent = formatINR(baseTotalPaise);
+  if (gstEl) gstEl.textContent = formatINR(gstPaise);
+  if (totalEl) totalEl.textContent = formatINR(invoiceTotalPaise);
 }
 
 // Inspecting-staff names are hidden from non-admins when the admin has
@@ -3222,18 +3262,29 @@ function closeFeeReceiptHistory() { document.getElementById('feeReceiptHistoryMo
 function renderFeeReceiptList() {
   document.getElementById('feeReceiptList').innerHTML = claimFeeReceipts.length === 0
     ? '<div style="padding:16px 0;color:var(--text-faint);font-size:13px">No fee receipts recorded yet.</div>'
-    : [...claimFeeReceipts].reverse().map(r => `
+    : claimFeeReceipts.map((r, i) => `
       <div class="act-row" style="cursor:pointer;flex-direction:column;align-items:stretch;gap:4px" onclick="openFeeReceiptForm('${r.id}')" title="Click to edit">
         <div style="display:flex;justify-content:space-between;gap:10px;font-weight:600;font-size:13px">
-          <span>${formatINR(toPaise(r.amount))}${r.receipt_mode?' — '+esc(r.receipt_mode):''}</span>
+          <span>Receipt ${i+1}${r.receipt_mode?' — '+esc(r.receipt_mode):''}</span>
           <span class="mono" style="color:var(--text-faint);font-weight:400;font-size:11px">${r.receipt_date}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-sec)">
+          Received ${formatINR(toPaise(r.amount))}${toPaise(r.tds_deduction)>0?` · TDS ${formatINR(toPaise(r.tds_deduction))}`:''}${toPaise(r.writeoff_amount)>0?` · Write-off ${formatINR(toPaise(r.writeoff_amount))}`:''}
         </div>
         ${r.reference_no ? `<div style="font-size:12px;color:var(--text-sec)" class="mono">Ref: ${esc(r.reference_no)}</div>` : ''}
         ${r.remarks ? `<div style="font-size:12px;color:var(--text-faint)">${esc(r.remarks)}</div>` : ''}
       </div>`).join('');
 
-  const totalPaise = claimFeeReceipts.reduce((sum, r) => sum + toPaise(r.amount), 0);
-  document.getElementById('feeReceiptTotal').textContent = claimFeeReceipts.length ? `Total: ${formatINR(totalPaise)}` : '';
+  const totals = claimFeeReceipts.reduce((acc, r) => {
+    acc.received += toPaise(r.amount);
+    acc.tds += toPaise(r.tds_deduction);
+    acc.writeoff += toPaise(r.writeoff_amount);
+    return acc;
+  }, { received: 0, tds: 0, writeoff: 0 });
+  const accountedPaise = totals.received + totals.tds + totals.writeoff;
+  document.getElementById('feeReceiptTotal').textContent = claimFeeReceipts.length
+    ? `Total Accounted: ${formatINR(accountedPaise)} (Received ${formatINR(totals.received)}, TDS ${formatINR(totals.tds)}, Write-off ${formatINR(totals.writeoff)})`
+    : '';
 }
 
 function openFeeReceiptForm(receiptId) {
@@ -3241,7 +3292,9 @@ function openFeeReceiptForm(receiptId) {
   const r = receiptId ? claimFeeReceipts.find(x => x.id === receiptId) : null;
   document.getElementById('frf-modal-title').textContent = r ? 'Edit Fee Receipt' : 'Add Fee Receipt';
   document.getElementById('frf-date').value = r ? r.receipt_date : '';
-  document.getElementById('frf-amount').value = r ? r.amount : '';
+  document.getElementById('frf-amount').value = r ? r.amount : '0';
+  document.getElementById('frf-tds').value = r ? (r.tds_deduction || '0') : '0';
+  document.getElementById('frf-writeoff').value = r ? (r.writeoff_amount || '0') : '0';
   document.getElementById('frf-mode').value = r ? (r.receipt_mode || 'NEFT / RTGS') : 'NEFT / RTGS';
   document.getElementById('frf-reference').value = r ? (r.reference_no || '') : '';
   document.getElementById('frf-remarks').value = r ? (r.remarks || '') : '';
@@ -3252,12 +3305,23 @@ function closeFeeReceiptForm() { document.getElementById('feeReceiptFormModal').
 async function submitFeeReceiptForm() {
   const date = document.getElementById('frf-date').value;
   if (!date) { alert('Receipt Date is required.'); return; }
-  const amount = document.getElementById('frf-amount').value.trim();
-  if (!isPositiveAmount(amount)) { alert('Amount Received must be a positive number.'); return; }
+  const amount = document.getElementById('frf-amount').value.trim() || '0';
+  const tds = document.getElementById('frf-tds').value.trim() || '0';
+  const writeoff = document.getElementById('frf-writeoff').value.trim() || '0';
+  for (const [v, label] of [[amount,'Received Amount'],[tds,'TDS Deduction'],[writeoff,'Write-off Amount']]) {
+    if (isNaN(Number(v.replace(/,/g,''))) || Number(v.replace(/,/g,'')) < 0) {
+      alert(`${label} must be a non-negative number.`); return;
+    }
+  }
+  if (toPaise(amount) <= 0 && toPaise(tds) <= 0 && toPaise(writeoff) <= 0) {
+    alert('At least one of Received Amount, TDS Deduction, or Write-off Amount must be greater than zero.'); return;
+  }
 
   const body = {
     receipt_date: date,
     amount,
+    tds_deduction: tds,
+    writeoff_amount: writeoff,
     receipt_mode: document.getElementById('frf-mode').value,
     reference_no: document.getElementById('frf-reference').value.trim(),
     remarks: document.getElementById('frf-remarks').value.trim(),

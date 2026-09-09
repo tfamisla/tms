@@ -30,37 +30,49 @@ const JOB_TEXT_FIELDS = [
 // out of JOB_TEXT_FIELDS/createJob's default-to-'' loop, since each has a
 // meaningful non-empty SQL default (e.g. 'to_be_decided', 'not_started');
 // a brand-new job should get those defaults, not blank strings.
+// V1.1A removed ila_remarks/lor_remarks/assessment_remarks/
+// insurer_approved_amount/insurer_approval_remarks/insured_agreed_amount/
+// insured_consent_remarks from active collection (simplification release —
+// these fields are no longer operationally needed). The underlying jobs
+// columns are NOT dropped (existing historical values stay intact), they're
+// simply no longer written by new saves.
 const MILESTONE_FIELDS = [
-  'ila_required', 'ila_issued', 'ila_issue_date', 'ila_remarks',
-  'lor_required', 'lor_issued', 'lor_issue_date', 'lor_remarks',
+  'ila_required', 'ila_issued', 'ila_issue_date',
+  'lor_required', 'lor_issued', 'lor_issue_date',
   'reminder_frequency', 'reminder_frequency_custom_days',
-  'assessment_status', 'assessment_prepared_date', 'assessed_amount', 'assessment_remarks',
+  'assessment_status', 'assessment_prepared_date', 'assessed_amount',
   'director_verification_status', 'director_verification_date', 'director_verified_by', 'director_verification_remarks',
   'insurer_approval_required', 'insurer_approval_status', 'insurer_approval_date',
-  'insurer_approved_amount', 'insurer_approval_remarks',
-  'insured_consent_status', 'insured_consent_date', 'insured_agreed_amount', 'insured_consent_remarks',
+  'insured_consent_status', 'insured_consent_date',
   'fsr_preparation_status', 'fsr_preparation_date', 'fsr_preparation_remarks',
 ];
 
 // FSR final verification / submission / dispatch / POD fields (V1.0) —
 // same reasoning as MILESTONE_FIELDS: meaningful non-'' SQL defaults.
+// V1.1A removed fsr_submission_remarks/dispatch_remarks/pod_remarks from
+// active collection — same dormant-column treatment as MILESTONE_FIELDS above.
 const FINAL_REPORT_FIELDS = [
   'fsr_final_verification_status', 'fsr_final_verification_date',
   'fsr_final_verified_by', 'fsr_final_verification_remarks',
-  'fsr_submitted', 'fsr_submission_date', 'fsr_submission_mode', 'fsr_submission_remarks',
+  'fsr_submitted', 'fsr_submission_date', 'fsr_submission_mode',
   'mail_sent_date',
   'hard_copy_required', 'hard_copy_sent', 'hard_copy_sent_date',
-  'courier_company', 'awb_tracking_no', 'dispatch_remarks',
-  'pod_status', 'pod_date', 'pod_remarks',
+  'courier_company', 'awb_tracking_no',
+  'pod_status', 'pod_date',
 ];
 
-// Billing fields (V1.1) — live in the `job_billing` sidecar table, NOT as
-// jobs columns (jobs was already at the D1 ~100-column-per-table limit; see
-// HANDOFF_NOTES.md). Deliberately excludes closure_date/closed_by/
-// closure_remarks, which only the dedicated POST /api/jobs/:id/close
-// endpoint may ever write (never the generic job PATCH). Handled separately
-// from UPDATABLE_FIELDS via upsertJobBilling(), not the generic jobs SET loop.
-const BILLING_FIELDS = ['bill_required', 'bill_date', 'bill_number', 'bill_amount', 'billing_remarks'];
+// Billing fields (V1.1, revised V1.1A) — live in the `job_billing` sidecar
+// table, NOT as jobs columns (jobs was already at the D1 ~100-column-per-
+// table limit; see HANDOFF_NOTES.md). V1.1A replaces the simplified
+// `bill_amount` with the real TFAM invoice inputs `professional_fees` +
+// `expenses` (Base Total/GST/Invoice Value are always derived from these,
+// never stored) and drops `billing_remarks` from active collection (both
+// old columns stay in job_billing as dormant/legacy fields). Deliberately
+// excludes closure_date/closed_by/closure_remarks, which only the
+// dedicated POST /api/jobs/:id/close endpoint may ever write (never the
+// generic job PATCH). Handled separately from UPDATABLE_FIELDS via
+// upsertJobBilling(), not the generic jobs SET loop.
+const BILLING_FIELDS = ['bill_required', 'bill_date', 'bill_number', 'professional_fees', 'expenses'];
 
 const UPDATABLE_FIELDS = [
   'title', ...JOB_TEXT_FIELDS, 'survey_date', 'survey_status',
@@ -175,51 +187,79 @@ function isPositiveNumber(v) {
   const n = Number(String(v).replace(/,/g, ''));
   return !isNaN(n) && n > 0;
 }
+function formatINR(paise) {
+  return '₹' + (Math.round(paise) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
 
-// Bill Amount / Total Received / Outstanding / Excess / Payment Status /
-// Closure Eligibility are all calculated here — never stored — from the
-// job's current bill fields plus the authoritative sum of its fee_receipts.
-// `totalReceivedPaise` must come from a fresh SUM query, not client state.
-function computeBilling(job, totalReceivedPaise) {
+// TFAM invoice structure (V1.1A) — Base Total / GST / Total Invoice Value
+// are always derived from Professional Fees + Expenses, never stored or
+// user-editable. GST is fixed at 18% — no rate selector, no manual GST entry.
+function computeInvoiceTotals(job) {
+  const professionalFeesPaise = toPaise(job.professional_fees);
+  const expensesPaise = toPaise(job.expenses);
+  const baseTotalPaise = professionalFeesPaise + expensesPaise;
+  const gstPaise = Math.round(baseTotalPaise * 0.18);
+  const invoiceTotalPaise = baseTotalPaise + gstPaise;
+  return { professionalFeesPaise, expensesPaise, baseTotalPaise, gstPaise, invoiceTotalPaise };
+}
+
+// Settlement (V1.1A) = Received + TDS Deducted + Write-off — TDS and
+// Write-off are always manual entry, TMS never calculates or assumes a TDS
+// percentage or write-off amount. Payment Status / Closure Eligibility are
+// calculated here — never stored — from the job's current invoice fields
+// plus the authoritative sums of its fee_receipts. `sums` must come from a
+// fresh SUM query, not client state.
+function computeBilling(job, sums) {
+  const { receivedPaise, tdsPaise, writeoffPaise } = sums;
   const billRequired = job.bill_required || 'to_be_decided';
-  const billAmountPaise = toPaise(job.bill_amount);
+  const invoice = computeInvoiceTotals(job);
+  const accountedPaise = receivedPaise + tdsPaise + writeoffPaise;
   let paymentStatus = 'to_be_decided';
   let outstandingPaise = 0;
   let excessPaise = 0;
   let financiallyEligible = false;
+  const invoiceComplete = !!job.bill_date && invoice.baseTotalPaise > 0;
 
   if (billRequired === 'no') {
     paymentStatus = 'not_required';
     financiallyEligible = true;
   } else if (billRequired === 'to_be_decided') {
     paymentStatus = 'to_be_decided';
-    financiallyEligible = false;
+  } else if (!invoiceComplete) {
+    paymentStatus = 'bill_pending';
+  } else if (accountedPaise === 0) {
+    paymentStatus = 'unpaid';
+    outstandingPaise = invoice.invoiceTotalPaise;
+  } else if (accountedPaise < invoice.invoiceTotalPaise) {
+    paymentStatus = 'part_payment';
+    outstandingPaise = invoice.invoiceTotalPaise - accountedPaise;
+  } else if (accountedPaise === invoice.invoiceTotalPaise) {
+    paymentStatus = 'fully_paid';
+    financiallyEligible = true;
   } else {
-    if (!job.bill_date || billAmountPaise <= 0) {
-      paymentStatus = 'bill_pending';
-    } else if (totalReceivedPaise === 0) {
-      paymentStatus = 'unpaid';
-      outstandingPaise = billAmountPaise;
-    } else if (totalReceivedPaise < billAmountPaise) {
-      paymentStatus = 'part_payment';
-      outstandingPaise = billAmountPaise - totalReceivedPaise;
-    } else if (totalReceivedPaise === billAmountPaise) {
-      paymentStatus = 'fully_paid';
-      financiallyEligible = true;
-    } else {
-      paymentStatus = 'excess_received';
-      excessPaise = totalReceivedPaise - billAmountPaise;
-      financiallyEligible = true;
-    }
+    paymentStatus = 'excess_received';
+    excessPaise = accountedPaise - invoice.invoiceTotalPaise;
+    financiallyEligible = true;
   }
 
   const closureEligible = financiallyEligible && job.fsr_submitted === 'yes';
-  return { billRequired, billAmountPaise, totalReceivedPaise, outstandingPaise, excessPaise, paymentStatus, closureEligible };
+  return {
+    billRequired, ...invoice,
+    receivedPaise, tdsPaise, writeoffPaise, accountedPaise,
+    outstandingPaise, excessPaise, paymentStatus, closureEligible,
+  };
 }
 
-async function sumFeeReceipts(db, jobId) {
-  const { results } = await db.prepare('SELECT amount FROM fee_receipts WHERE job_id = ?').bind(jobId).all();
-  return results.reduce((sum, r) => sum + toPaise(r.amount), 0);
+async function sumFeeReceiptTotals(db, jobId) {
+  const { results } = await db.prepare(
+    'SELECT amount, tds_deduction, writeoff_amount FROM fee_receipts WHERE job_id = ?'
+  ).bind(jobId).all();
+  return results.reduce((acc, r) => {
+    acc.receivedPaise += toPaise(r.amount);
+    acc.tdsPaise += toPaise(r.tds_deduction);
+    acc.writeoffPaise += toPaise(r.writeoff_amount);
+    return acc;
+  }, { receivedPaise: 0, tdsPaise: 0, writeoffPaise: 0 });
 }
 
 // Billing fields live in the `job_billing` sidecar table (1:1 with jobs),
@@ -229,7 +269,8 @@ async function sumFeeReceipts(db, jobId) {
 // created/edited before its first billing write).
 const JOB_BILLING_DEFAULTS = {
   bill_required: 'to_be_decided', bill_date: '', bill_number: '', bill_amount: '',
-  billing_remarks: '', closure_date: '', closed_by: '', closure_remarks: '',
+  professional_fees: '', expenses: '', billing_remarks: '',
+  closure_date: '', closed_by: '', closure_remarks: '',
 };
 function mergeJobBilling(job, billingRow) {
   return { ...job, ...JOB_BILLING_DEFAULTS, ...(billingRow || {}) };
@@ -287,13 +328,7 @@ async function validateMilestones(db, existing, body) {
     throw new Error('Insured Consent Date is required when status is Accepted');
   }
 
-  for (const [field, label] of [
-    ['assessed_amount', 'Assessed Loss Amount'],
-    ['insurer_approved_amount', 'Insurer Approved Amount'],
-    ['insured_agreed_amount', 'Insured Agreed Amount'],
-  ]) {
-    if (!isNonNegativeNumber(eff(field))) throw new Error(`${label} must be a non-negative number`);
-  }
+  if (!isNonNegativeNumber(eff('assessed_amount'))) throw new Error('Assessed Loss Amount must be a non-negative number');
 }
 
 // FSR Final Verification / Submission / Dispatch / POD (V1.0). Deliberately
@@ -325,27 +360,32 @@ async function validateFinalReport(db, existing, body) {
   }
 }
 
-// Bill Required = Yes only demands Date + a positive Amount once the bill
-// is actually being entered (either field non-blank in the effective
-// state) — "Yes, not generated yet" (both blank) stays valid.
+// Bill Required = Yes only demands Date + a positive Professional Fees once
+// the invoice is actually being entered (any of Date/Professional
+// Fees/Expenses non-blank in the effective state) — "Yes, not generated
+// yet" (all blank) stays valid. Expenses may be zero.
 function validateBilling(existing, body) {
   const eff = field => (body[field] !== undefined ? body[field] : existing[field]);
   const required = eff('bill_required');
   const date = eff('bill_date');
-  const amount = eff('bill_amount');
+  const fees = eff('professional_fees');
+  const expenses = eff('expenses');
+  const enteringInvoice = !!(date || fees || expenses);
 
-  if (required === 'yes' && (date || amount)) {
-    if (!date) throw new Error('Bill Date is required once the bill is generated');
-    if (!isPositiveNumber(amount)) throw new Error('Bill Amount must be a positive number once the bill is generated');
-  } else if (amount && !isNonNegativeNumber(amount)) {
-    throw new Error('Bill Amount must be a non-negative number');
+  if (required === 'yes' && enteringInvoice) {
+    if (!date) throw new Error('Bill Date is required once the invoice is generated');
+    if (!isPositiveNumber(fees)) throw new Error('Professional Fees must be a positive number once the invoice is generated');
+    if (expenses && !isNonNegativeNumber(expenses)) throw new Error('Expenses must be a non-negative number');
+  } else {
+    if (fees && !isNonNegativeNumber(fees)) throw new Error('Professional Fees must be a non-negative number');
+    if (expenses && !isNonNegativeNumber(expenses)) throw new Error('Expenses must be a non-negative number');
   }
 }
 
 const PAYMENT_STATUS_LABELS = {
   to_be_decided: 'Billing Requirement To Be Decided', not_required: 'Bill Not Required',
   bill_pending: 'Bill Pending', unpaid: 'Unpaid', part_payment: 'Part Payment',
-  fully_paid: 'Fully Paid', excess_received: 'Excess Received',
+  fully_paid: 'Fully Settled', excess_received: 'Excess Accounted',
 };
 
 // Logs only the transitions that actually change the *computed* payment
@@ -379,12 +419,17 @@ async function listJobs(db) {
     'SELECT job_id, status FROM claim_queries'
   ).all();
   const { results: feeReceipts } = await db.prepare(
-    'SELECT job_id, amount FROM fee_receipts'
+    'SELECT job_id, amount, tds_deduction, writeoff_amount FROM fee_receipts'
   ).all();
   const { results: billingRows } = await db.prepare('SELECT * FROM job_billing').all();
 
-  const receivedPaiseByJob = {};
-  for (const r of feeReceipts) receivedPaiseByJob[r.job_id] = (receivedPaiseByJob[r.job_id] || 0) + toPaise(r.amount);
+  const sumsByJob = {};
+  for (const r of feeReceipts) {
+    const s = (sumsByJob[r.job_id] ||= { receivedPaise: 0, tdsPaise: 0, writeoffPaise: 0 });
+    s.receivedPaise += toPaise(r.amount);
+    s.tdsPaise += toPaise(r.tds_deduction);
+    s.writeoffPaise += toPaise(r.writeoff_amount);
+  }
   const billingByJob = {};
   for (const b of billingRows) billingByJob[b.job_id] = b;
 
@@ -412,11 +457,18 @@ async function listJobs(db) {
     job.document_receipt_count = recCountByJob[job.id] || 0;
     job.open_query_count = openQueryCountByJob[job.id] || 0;
 
-    const receivedPaise = receivedPaiseByJob[job.id] || 0;
-    const billing = computeBilling(job, receivedPaise);
+    const sums = sumsByJob[job.id] || { receivedPaise: 0, tdsPaise: 0, writeoffPaise: 0 };
+    const billing = computeBilling(job, sums);
     job.billing = {
-      bill_amount_paise: billing.billAmountPaise,
-      total_received_paise: billing.totalReceivedPaise,
+      professional_fees_paise: billing.professionalFeesPaise,
+      expenses_paise: billing.expensesPaise,
+      base_total_paise: billing.baseTotalPaise,
+      gst_paise: billing.gstPaise,
+      invoice_total_paise: billing.invoiceTotalPaise,
+      received_paise: billing.receivedPaise,
+      tds_paise: billing.tdsPaise,
+      writeoff_paise: billing.writeoffPaise,
+      accounted_paise: billing.accountedPaise,
       outstanding_paise: billing.outstandingPaise,
       excess_paise: billing.excessPaise,
       payment_status: billing.paymentStatus,
@@ -502,11 +554,11 @@ async function updateJob(db, id, body, user) {
   // — capture the before-state so we can log only a real transition, not
   // every recalculation.
   const billingChanged = BILLING_FIELDS.some(f => body[f] !== undefined && body[f] !== existing[f]);
-  let receivedPaiseForLog = 0;
+  let sumsForLog = null;
   let beforeBilling = null;
   if (billingChanged) {
-    receivedPaiseForLog = await sumFeeReceipts(db, id);
-    beforeBilling = computeBilling(existing, receivedPaiseForLog);
+    sumsForLog = await sumFeeReceiptTotals(db, id);
+    beforeBilling = computeBilling(existing, sumsForLog);
   }
 
   const sets = [];
@@ -543,7 +595,7 @@ async function updateJob(db, id, body, user) {
   const updated = await getJobWithBilling(db, id);
 
   if (billingChanged && user) {
-    const afterBilling = computeBilling(updated, receivedPaiseForLog);
+    const afterBilling = computeBilling(updated, sumsForLog);
     await logBillingTransition(db, id, beforeBilling, afterBilling, user.id);
   }
 
@@ -929,36 +981,43 @@ async function createFeeReceipt(db, jobId, body, user) {
   if (!job) throw new Error('job not found');
 
   const receiptDate = (body.receipt_date || '').trim();
-  const amount = (body.amount || '').toString().trim();
+  const amount = (body.amount !== undefined && body.amount !== null ? String(body.amount) : '0').trim() || '0';
+  const tds = (body.tds_deduction !== undefined && body.tds_deduction !== null ? String(body.tds_deduction) : '0').trim() || '0';
+  const writeoff = (body.writeoff_amount !== undefined && body.writeoff_amount !== null ? String(body.writeoff_amount) : '0').trim() || '0';
   const receiptMode = (body.receipt_mode || '').trim();
   const referenceNo = (body.reference_no || '').trim();
   const remarks = (body.remarks || '').trim();
 
   if (!EVENT_DATE_RE.test(receiptDate)) throw new Error('A valid receipt date (YYYY-MM-DD) is required');
-  if (!isPositiveNumber(amount)) throw new Error('Amount Received must be a positive number');
+  if (!isNonNegativeNumber(amount)) throw new Error('Received Amount must be a non-negative number');
+  if (!isNonNegativeNumber(tds)) throw new Error('TDS Deduction must be a non-negative number');
+  if (!isNonNegativeNumber(writeoff)) throw new Error('Write-off Amount must be a non-negative number');
+  if (toPaise(amount) <= 0 && toPaise(tds) <= 0 && toPaise(writeoff) <= 0) {
+    throw new Error('At least one of Received Amount, TDS Deduction, or Write-off Amount must be greater than zero');
+  }
 
-  const beforePaise = await sumFeeReceipts(db, jobId);
-  const before = computeBilling(job, beforePaise);
+  const before = computeBilling(job, await sumFeeReceiptTotals(db, jobId));
 
   const now = Date.now();
   const id = `FR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   await db.prepare(`
-    INSERT INTO fee_receipts (id, job_id, receipt_date, amount, receipt_mode, reference_no, remarks, created_by, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
-  `).bind(id, jobId, receiptDate, amount, receiptMode, referenceNo, remarks, user.id, now, now).run();
+    INSERT INTO fee_receipts (id, job_id, receipt_date, amount, tds_deduction, writeoff_amount, receipt_mode, reference_no, remarks, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, receiptDate, amount, tds, writeoff, receiptMode, referenceNo, remarks, user.id, now, now).run();
 
-  const afterPaise = beforePaise + toPaise(amount);
-  const after = computeBilling(job, afterPaise);
+  const after = computeBilling(job, await sumFeeReceiptTotals(db, jobId));
 
-  const amountLabel = (toPaise(amount) / 100).toLocaleString('en-IN');
+  const parts = [`Received ${formatINR(toPaise(amount))}`];
+  if (toPaise(tds) > 0) parts.push(`TDS ${formatINR(toPaise(tds))}`);
+  if (toPaise(writeoff) > 0) parts.push(`Write-off ${formatINR(toPaise(writeoff))}`);
   await appendJobActivity(db, jobId, [{
-    text: `${user.id} added fee receipt — ₹${amountLabel}${receiptMode ? ' — ' + receiptMode : ''} — ${receiptDate}.`,
+    text: `Fee receipt added — ${parts.join(', ')}${receiptMode ? ' — ' + receiptMode : ''} — ${receiptDate}.`,
     ts: now, actor: user.id,
   }]);
   await logBillingTransition(db, jobId, before, after, user.id);
 
-  return { id, job_id: jobId, receipt_date: receiptDate, amount, receipt_mode: receiptMode,
-    reference_no: referenceNo, remarks, created_by: user.id, created_at: now, updated_at: now };
+  return { id, job_id: jobId, receipt_date: receiptDate, amount, tds_deduction: tds, writeoff_amount: writeoff,
+    receipt_mode: receiptMode, reference_no: referenceNo, remarks, created_by: user.id, created_at: now, updated_at: now };
 }
 
 async function updateFeeReceipt(db, jobId, receiptId, body, user) {
@@ -970,36 +1029,45 @@ async function updateFeeReceipt(db, jobId, receiptId, body, user) {
 
   const next = {
     receipt_date: body.receipt_date !== undefined ? String(body.receipt_date).trim() : existing.receipt_date,
-    amount: body.amount !== undefined ? String(body.amount).trim() : existing.amount,
+    amount: body.amount !== undefined ? (String(body.amount).trim() || '0') : (existing.amount || '0'),
+    tds_deduction: body.tds_deduction !== undefined ? (String(body.tds_deduction).trim() || '0') : (existing.tds_deduction || '0'),
+    writeoff_amount: body.writeoff_amount !== undefined ? (String(body.writeoff_amount).trim() || '0') : (existing.writeoff_amount || '0'),
     receipt_mode: body.receipt_mode !== undefined ? String(body.receipt_mode).trim() : existing.receipt_mode,
     reference_no: body.reference_no !== undefined ? String(body.reference_no).trim() : existing.reference_no,
     remarks: body.remarks !== undefined ? String(body.remarks).trim() : existing.remarks,
   };
   if (!EVENT_DATE_RE.test(next.receipt_date)) throw new Error('A valid receipt date (YYYY-MM-DD) is required');
-  if (!isPositiveNumber(next.amount)) throw new Error('Amount Received must be a positive number');
+  if (!isNonNegativeNumber(next.amount)) throw new Error('Received Amount must be a non-negative number');
+  if (!isNonNegativeNumber(next.tds_deduction)) throw new Error('TDS Deduction must be a non-negative number');
+  if (!isNonNegativeNumber(next.writeoff_amount)) throw new Error('Write-off Amount must be a non-negative number');
+  if (toPaise(next.amount) <= 0 && toPaise(next.tds_deduction) <= 0 && toPaise(next.writeoff_amount) <= 0) {
+    throw new Error('At least one of Received Amount, TDS Deduction, or Write-off Amount must be greater than zero');
+  }
 
-  const beforePaise = await sumFeeReceipts(db, jobId);
-  const before = computeBilling(job, beforePaise);
+  const before = computeBilling(job, await sumFeeReceiptTotals(db, jobId));
 
-  const changeLines = [];
-  if (next.amount !== existing.amount) changeLines.push(`amount from ₹${(toPaise(existing.amount)/100).toLocaleString('en-IN')} to ₹${(toPaise(next.amount)/100).toLocaleString('en-IN')}`);
-  if (next.receipt_date !== existing.receipt_date) changeLines.push(`date from ${existing.receipt_date} to ${next.receipt_date}`);
-  if (next.receipt_mode !== (existing.receipt_mode || '')) changeLines.push(`mode from "${existing.receipt_mode || '—'}" to "${next.receipt_mode || '—'}"`);
-  if (next.reference_no !== (existing.reference_no || '')) changeLines.push('reference number');
-  if (next.remarks !== (existing.remarks || '')) changeLines.push('remarks');
+  const financialChanges = [];
+  if (next.amount !== (existing.amount || '0')) financialChanges.push(`Received amount changed from ${formatINR(toPaise(existing.amount))} to ${formatINR(toPaise(next.amount))}.`);
+  if (next.tds_deduction !== (existing.tds_deduction || '0')) financialChanges.push(`TDS changed from ${formatINR(toPaise(existing.tds_deduction))} to ${formatINR(toPaise(next.tds_deduction))}.`);
+  if (next.writeoff_amount !== (existing.writeoff_amount || '0')) financialChanges.push(`Write-off changed from ${formatINR(toPaise(existing.writeoff_amount))} to ${formatINR(toPaise(next.writeoff_amount))}.`);
+
+  const otherChanges = [];
+  if (next.receipt_date !== existing.receipt_date) otherChanges.push(`date from ${existing.receipt_date} to ${next.receipt_date}`);
+  if (next.receipt_mode !== (existing.receipt_mode || '')) otherChanges.push(`mode from "${existing.receipt_mode || '—'}" to "${next.receipt_mode || '—'}"`);
+  if (next.reference_no !== (existing.reference_no || '')) otherChanges.push('reference number');
+  if (next.remarks !== (existing.remarks || '')) otherChanges.push('remarks');
 
   const now = Date.now();
   await db.prepare(`
-    UPDATE fee_receipts SET receipt_date=?, amount=?, receipt_mode=?, reference_no=?, remarks=?, updated_at=?
+    UPDATE fee_receipts SET receipt_date=?, amount=?, tds_deduction=?, writeoff_amount=?, receipt_mode=?, reference_no=?, remarks=?, updated_at=?
     WHERE id = ?
-  `).bind(next.receipt_date, next.amount, next.receipt_mode, next.reference_no, next.remarks, now, receiptId).run();
+  `).bind(next.receipt_date, next.amount, next.tds_deduction, next.writeoff_amount, next.receipt_mode, next.reference_no, next.remarks, now, receiptId).run();
 
-  if (changeLines.length > 0) {
-    await appendJobActivity(db, jobId, [{ text: `${user.id} updated fee receipt ${changeLines.join('; ')}.`, ts: now, actor: user.id }]);
-  }
+  const entries = financialChanges.map(text => ({ text: `Fee receipt corrected — ${text}`, ts: now, actor: user.id }));
+  if (otherChanges.length > 0) entries.push({ text: `${user.id} updated fee receipt ${otherChanges.join('; ')}.`, ts: now, actor: user.id });
+  if (entries.length > 0) await appendJobActivity(db, jobId, entries);
 
-  const afterPaise = beforePaise - toPaise(existing.amount) + toPaise(next.amount);
-  const after = computeBilling(job, afterPaise);
+  const after = computeBilling(job, await sumFeeReceiptTotals(db, jobId));
   await logBillingTransition(db, jobId, before, after, user.id);
 
   return db.prepare('SELECT * FROM fee_receipts WHERE id = ?').bind(receiptId).first();
@@ -1022,8 +1090,8 @@ async function closeJob(db, jobId, body, user) {
   if (!job) throw new Error('job not found');
   if (job.stage === 'closed') throw new Error('This claim is already closed');
 
-  const receivedPaise = await sumFeeReceipts(db, jobId);
-  const billing = computeBilling(job, receivedPaise);
+  const sums = await sumFeeReceiptTotals(db, jobId);
+  const billing = computeBilling(job, sums);
   if (!billing.closureEligible) {
     throw new Error('This claim is not currently eligible for closure');
   }
