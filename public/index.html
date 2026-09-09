@@ -15,7 +15,7 @@
   --amber-bg:#FEF3DC;--ground:#F2F5FA;--surface:#FFFFFF;--border:#DDE3EE;
   --text-pri:#162040;--text-sec:#4B5975;--text-faint:#8A9AB8;
   --green:#1A7A4A;--green-bg:#E4F5EC;--red:#B52A2A;--red-bg:#FAEAEA;
-  --blue:#1A4FA0;--blue-bg:#E4ECFA;
+  --blue:#1A4FA0;--blue-bg:#E4ECFA;--purple:#6D28D9;--purple-bg:#EFE7FC;
   --radius-sm:4px;--radius:8px;--radius-lg:14px;
   --shadow-sm:0 1px 3px rgba(22,32,64,.07),0 1px 2px rgba(22,32,64,.04);
   --shadow:0 4px 16px rgba(22,32,64,.12);
@@ -25,14 +25,14 @@
   --amber-bg:#2A1F00;--ground:#0E1520;--surface:#151E30;--border:#1F2D46;
   --text-pri:#C8D8F8;--text-sec:#7A8DAD;--text-faint:#4A5975;
   --green:#3DCC7A;--green-bg:#0A1F14;--red:#FF7070;--red-bg:#200A0A;
-  --blue:#6699FF;--blue-bg:#0A1225;
+  --blue:#6699FF;--blue-bg:#0A1225;--purple:#B794F6;--purple-bg:#1F1530;
 }}
 :root[data-theme="dark"]{
   --navy:#A8BFFF;--navy-mid:#1E2A45;--amber:#F0A930;--amber-lt:#FFD07A;
   --amber-bg:#2A1F00;--ground:#0E1520;--surface:#151E30;--border:#1F2D46;
   --text-pri:#C8D8F8;--text-sec:#7A8DAD;--text-faint:#4A5975;
   --green:#3DCC7A;--green-bg:#0A1F14;--red:#FF7070;--red-bg:#200A0A;
-  --blue:#6699FF;--blue-bg:#0A1225;
+  --blue:#6699FF;--blue-bg:#0A1225;--purple:#B794F6;--purple-bg:#1F1530;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 /* V1.5 regression fix: the `hidden` attribute only maps to display:none in
@@ -363,6 +363,45 @@ details.sp-section[open] summary{margin-bottom:0}
 .wf-tl-item.current{background:var(--amber);color:#fff;border-color:transparent;font-weight:600}
 .wf-tl-item.skipped{color:var(--text-faint);text-decoration:line-through;opacity:.6}
 
+/* ── DIRECTOR CONTROL CENTRE (V1.6) ── */
+.cc-wrap{flex:1;overflow:auto;max-width:1400px;margin:0 auto;padding:16px 20px 40px;width:100%}
+.cc-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.cc-filters{display:flex;gap:8px;flex-wrap:wrap}
+.cc-today-bar{display:flex;gap:16px;flex-wrap:wrap;background:var(--navy);color:#fff;border-radius:var(--radius);padding:10px 16px;margin-bottom:16px;font-size:12px}
+.cc-today-bar .cc-today-stat{display:flex;flex-direction:column;gap:2px}
+.cc-today-bar .cc-today-num{font-family:'DM Mono',monospace;font-size:15px;font-weight:600}
+.cc-today-bar .cc-today-lbl{color:rgba(255,255,255,.6);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+.cc-card-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:6px}
+.cc-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;cursor:pointer;transition:border-color .15s,transform .1s}
+.cc-card:hover{border-color:var(--amber);transform:translateY(-1px)}
+.cc-card.selected{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-bg)}
+.cc-card-num{font-family:'DM Mono',monospace;font-size:24px;font-weight:700;line-height:1.1}
+.cc-card-lbl{font-size:11px;color:var(--text-sec);margin-top:4px}
+.cc-card.tone-red .cc-card-num{color:var(--red)}
+.cc-card.tone-amber .cc-card-num{color:var(--amber)}
+.cc-card.tone-green .cc-card-num{color:var(--green)}
+.cc-card.tone-blue .cc-card-num{color:var(--blue)}
+.cc-card.tone-purple .cc-card-num{color:var(--purple)}
+.cc-two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:900px){.cc-two-col{grid-template-columns:1fr}}
+.cc-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.cc-panel-hdr{font-family:'DM Mono',monospace;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);margin-bottom:8px}
+.cc-list-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px;flex-wrap:wrap}
+.cc-list-row:last-child{border-bottom:none}
+.cc-list-row.clickable{cursor:pointer}
+.cc-list-row.clickable:hover{color:var(--blue)}
+.cc-badge{display:inline-block;font-size:10.5px;font-weight:700;background:var(--red-bg);color:var(--red);border-radius:100px;padding:1px 8px;margin-left:4px}
+.cc-badge.zero{background:var(--green-bg);color:var(--green)}
+.cc-job-row{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--ground);border:1px solid var(--border);border-left:4px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;cursor:pointer;flex-wrap:wrap;margin-bottom:6px}
+.cc-job-row:hover{border-color:var(--amber)}
+.cc-job-row.health-stalled{border-left-color:var(--red)}
+.cc-job-row.health-attention{border-left-color:#F97316}
+.cc-job-row.health-watch{border-left-color:var(--amber)}
+.cc-job-row.health-on_track{border-left-color:var(--green)}
+.cc-job-row.health-closed{border-left-color:var(--text-faint)}
+.cc-job-main{font-weight:600}
+.cc-job-sub{font-size:11px;color:var(--text-faint)}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -406,6 +445,7 @@ details.sp-section[open] summary{margin-bottom:0}
     <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
     <button class="nav-btn" data-view="mywork" onclick="switchView('mywork')">🎯 My Work</button>
     <button class="nav-btn" data-view="tasks" onclick="switchView('tasks')">📋 Tasks</button>
+    <button class="nav-btn" data-view="controlcentre" id="controlCentreNavBtn" onclick="switchView('controlcentre')" hidden>🧭 Control Centre</button>
     <button class="nav-btn" data-view="staff" onclick="switchView('staff')">🛠 Admin</button>
     <button class="nav-btn" data-view="log" onclick="switchView('log')">📜 Work Log</button>
   </div>
@@ -528,6 +568,73 @@ details.sp-section[open] summary{margin-bottom:0}
       <input type="checkbox" id="tf-show-completed" onchange="renderTasksView()"> Show Completed / Cancelled
     </label>
     <div id="taskListContainer"></div>
+  </div>
+</div>
+
+<!-- ── DIRECTOR CONTROL CENTRE (V1.6) ── Admin/Director only, read-only ── -->
+<div class="view" id="view-controlcentre">
+  <div class="cc-wrap">
+    <div class="cc-toolbar">
+      <div class="cc-filters">
+        <select class="log-filter-sel" id="cc-branch" onchange="renderControlCentre()"><option value="">All branches</option></select>
+        <select class="log-filter-sel" id="cc-director" onchange="renderControlCentre()"><option value="">All directors</option></select>
+        <select class="log-filter-sel" id="cc-health" onchange="renderControlCentre()">
+          <option value="">Any health</option>
+          <option value="on_track">On Track</option><option value="watch">Watch</option>
+          <option value="attention">Attention</option><option value="stalled">Stalled</option>
+        </select>
+        <input class="task-search" id="cc-search" placeholder="Search job no., claim no., policy no., insured" oninput="renderControlCentre()">
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-sec)">
+        <input type="checkbox" id="cc-my-only" onchange="renderControlCentre()"> My Responsible Claims Only
+      </label>
+    </div>
+
+    <div id="ccLoading" class="task-empty">Loading Control Centre…</div>
+
+    <div id="ccBody" hidden>
+      <div class="cc-today-bar" id="ccTodayBar"></div>
+
+      <div class="mw-section-hdr" style="margin-top:0">Executive Status</div>
+      <div class="cc-card-row" id="ccExecCards"></div>
+
+      <div class="mw-section-hdr">Approvals &amp; Workflow Bottlenecks</div>
+      <div class="cc-card-row" id="ccApprovalCards"></div>
+
+      <div class="mw-section-hdr">Team &amp; Live Operations</div>
+      <div class="cc-two-col">
+        <div class="cc-panel">
+          <div class="cc-panel-hdr">Live Team</div>
+          <div id="ccLiveTeam"></div>
+        </div>
+        <div class="cc-panel">
+          <div class="cc-panel-hdr">Staff Workload</div>
+          <div id="ccStaffWorkload"></div>
+        </div>
+      </div>
+
+      <div class="mw-section-hdr">Ageing &amp; Bottlenecks</div>
+      <div class="cc-two-col">
+        <div class="cc-panel">
+          <div class="cc-panel-hdr">Workflow Bottlenecks</div>
+          <div id="ccBottlenecks"></div>
+        </div>
+        <div class="cc-panel">
+          <div class="cc-panel-hdr">Branch Workload</div>
+          <div id="ccBranches"></div>
+        </div>
+      </div>
+      <div class="cc-panel" style="margin-top:10px">
+        <div class="cc-panel-hdr">Oldest Open Claims</div>
+        <div id="ccOldest"></div>
+      </div>
+
+      <div class="mw-section-hdr">Data Quality <span id="ccDataIssuesCount" class="cc-badge"></span></div>
+      <div id="ccDataIssues"></div>
+
+      <div class="mw-section-hdr" id="ccDrilldownHdr" hidden>Selected: <span id="ccDrilldownLabel"></span> <button type="button" class="wh-correct-btn" onclick="clearCcDrilldown()">Clear</button></div>
+      <div id="ccDrilldown"></div>
+    </div>
   </div>
 </div>
 
@@ -1710,6 +1817,7 @@ function onLoggedIn() {
   document.getElementById('topbarUser').innerHTML = `${esc(currentUserRecord.name)} ${badge}`;
   document.getElementById('addStaffBtn').hidden = !isAdminUser();
   document.getElementById('addBranchBtn').hidden = !isAdminUser();
+  document.getElementById('controlCentreNavBtn').hidden = !(isAdminUser() || /director/i.test(currentUserRecord.role || ''));
   buildNewJobAssign();
   buildLogFilters();
   restoreAvailableMinutesFilter();
@@ -3436,6 +3544,248 @@ async function deleteBranchEntry() {
 function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  if (name === 'controlcentre') {
+    loadControlCentre();
+    if (!ccPollTimer) ccPollTimer = setInterval(loadControlCentre, 20000);
+  } else if (ccPollTimer) {
+    clearInterval(ccPollTimer);
+    ccPollTimer = null;
+  }
+}
+
+// ── DIRECTOR CONTROL CENTRE (V1.6) ──────────────────────────────────
+// Admin/Director only. One aggregated read-only fetch, polled on a slower
+// ~20s cadence and only while this view is active — deliberately NOT part
+// of fetchAll()'s 5s loop, since this payload aggregates every open claim
+// and can grow with TFAM's scale (see spec's N+1/performance guidance).
+let controlCentre = null;
+let ccPollTimer = null;
+let ccDrilldown = null; // { label, rows }
+
+async function loadControlCentre() {
+  if (!canCloseJobs()) return; // same Admin/Director predicate used to gate Close Job
+  const loadingEl = document.getElementById('ccLoading');
+  const bodyEl = document.getElementById('ccBody');
+  try {
+    controlCentre = await apiGet('/api/control-centre');
+    if (loadingEl) loadingEl.hidden = true;
+    if (bodyEl) bodyEl.hidden = false;
+    buildCcFilterOptions();
+    renderControlCentre();
+  } catch (e) {
+    if (loadingEl) { loadingEl.textContent = 'Control Centre unavailable — ' + e.message; loadingEl.hidden = false; }
+    if (bodyEl) bodyEl.hidden = true;
+  }
+}
+
+function buildCcFilterOptions() {
+  const branchSel = document.getElementById('cc-branch');
+  const dirSel = document.getElementById('cc-director');
+  if (branchSel && branchSel.options.length <= 1) {
+    branchSel.innerHTML = '<option value="">All branches</option>' + BRANCHES.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  }
+  if (dirSel && dirSel.options.length <= 1) {
+    dirSel.innerHTML = '<option value="">All directors</option>' + TEAM.filter(isDirector).map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  }
+}
+
+// Shared filter predicate — every drill-down list is filtered through this
+// so the toolbar's Branch/Director/Health/Search/My-Only controls apply
+// consistently everywhere, not just to one section.
+function ccJobMatchesFilters(r) {
+  const branch = document.getElementById('cc-branch').value;
+  const director = document.getElementById('cc-director').value;
+  const health = document.getElementById('cc-health').value;
+  const search = (document.getElementById('cc-search').value || '').trim().toLowerCase();
+  const myOnly = document.getElementById('cc-my-only').checked;
+  if (branch && !(r.branch_ids || []).includes(branch)) return false;
+  if (director && !(r.director_ids || []).includes(director)) return false;
+  if (health && r.health !== health) return false;
+  if (myOnly && !(r.director_ids || []).includes(currentUser)) return false;
+  if (search) {
+    const hay = `${r.job_id} ${r.claim_no || ''} ${r.insured || ''}`.toLowerCase();
+    if (!hay.includes(search)) return false;
+  }
+  return true;
+}
+
+function ccJobRowHtml(r) {
+  const sub = [r.current_step_label || r.phase_label, r.reason].filter(Boolean).join(' — ');
+  const days = r.days_since_activity != null ? `${r.days_since_activity}d since activity` : '';
+  return `
+    <div class="cc-job-row health-${r.health}" onclick="openJob('${r.job_id}')">
+      <div>
+        <div class="cc-job-main">${esc(r.job_id)} — ${esc(r.insured || r.title || '')}</div>
+        <div class="cc-job-sub">${esc(sub)}</div>
+      </div>
+      <div class="cc-job-sub">${esc(WORKFLOW_HEALTH_LABELS[r.health] || r.health)}${days ? ' · ' + esc(days) : ''}</div>
+    </div>`;
+}
+
+function selectCcDrilldown(label, rows) {
+  ccDrilldown = { label, rows };
+  renderCcDrilldownOnly();
+  document.getElementById('ccDrilldown').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function clearCcDrilldown() {
+  ccDrilldown = null;
+  renderCcDrilldownOnly();
+}
+function renderCcDrilldownOnly() {
+  const hdr = document.getElementById('ccDrilldownHdr');
+  const body = document.getElementById('ccDrilldown');
+  if (!ccDrilldown) { hdr.hidden = true; body.innerHTML = ''; return; }
+  hdr.hidden = false;
+  document.getElementById('ccDrilldownLabel').textContent = `${ccDrilldown.label} (${ccDrilldown.rows.length})`;
+  const filtered = ccDrilldown.rows.filter(ccJobMatchesFilters);
+  body.innerHTML = filtered.length === 0
+    ? '<div class="task-empty">No claims match the current filters.</div>'
+    : filtered.map(ccJobRowHtml).join('');
+}
+
+function ccCardHtml(num, label, tone, onclick, selected) {
+  return `<div class="cc-card tone-${tone}${selected ? ' selected' : ''}" onclick="${onclick}">
+    <div class="cc-card-num">${num}</div><div class="cc-card-lbl">${esc(label)}</div>
+  </div>`;
+}
+
+function ccSelectHandlerFor(label, rows) {
+  // Rows are plain data at render time; stash them on a global keyed map so
+  // the onclick string doesn't need to embed a huge JSON literal.
+  ccPendingLists[label] = rows;
+  return `selectCcDrilldownByLabel(${JSON.stringify(label)})`;
+}
+let ccPendingLists = {};
+function selectCcDrilldownByLabel(label) {
+  selectCcDrilldown(label, ccPendingLists[label] || []);
+}
+
+function renderControlCentre() {
+  const cc = controlCentre;
+  if (!cc) return;
+  ccPendingLists = {};
+
+  // Today bar
+  const t = cc.today;
+  const todayStats = [
+    ['Surveys', t.surveys_today], ['Tasks Due', t.tasks_due_today], ['Tasks Completed', t.tasks_completed_today],
+    ['New Jobs', t.new_jobs_today], ['FSR Submitted', t.fsr_submitted_today], ['Bills Raised', t.bills_raised_today],
+    ['Payments Received', t.payments_received_today], ['Claims Closed', t.claims_closed_today],
+    ['Tracked Today', formatDurationSeconds(t.tracked_task_work_today_seconds)],
+    ['Active Now', cc.team.live.length],
+  ];
+  document.getElementById('ccTodayBar').innerHTML = todayStats.map(([lbl, num]) =>
+    `<div class="cc-today-stat"><span class="cc-today-num">${num}</span><span class="cc-today-lbl">${esc(lbl)}</span></div>`).join('');
+
+  // Executive cards
+  const s = cc.summary;
+  const execCards = [
+    ccCardHtml(s.open_claims, 'Open Claims', 'blue', ccSelectHandlerFor('Open Claims', allCcRows())),
+    ccCardHtml(s.needs_attention, 'Needs Attention', 'amber', ccSelectHandlerFor('Needs Attention', allCcRows().filter(needsAttentionRow))),
+    ccCardHtml(s.stalled, 'Stalled', 'red', ccSelectHandlerFor('Stalled', allCcRows().filter(r => r.health === 'stalled'))),
+    ccCardHtml(s.overdue_tasks, 'Overdue Tasks', 'red', "switchView('tasks')"),
+    ccCardHtml(s.open_queries, 'Open Queries', 'amber', ccSelectHandlerFor('Claims with Open Queries', queryClaimsRows())),
+    ccCardHtml(s.ready_for_closure, 'Ready for Closure', 'green', ccSelectHandlerFor('Ready for Closure', cc.ready_for_closure)),
+  ];
+  document.getElementById('ccExecCards').innerHTML = execCards.join('');
+
+  // Approval / bottleneck cards
+  const ap = cc.approvals;
+  const approvalCards = [
+    ccCardHtml(ap.director_assessment_pending.length, 'Director Assessment Pending', 'purple', ccSelectHandlerFor('Director Assessment Pending', ap.director_assessment_pending)),
+    ccCardHtml(ap.assessment_returned.length, 'Assessment Returned', 'red', ccSelectHandlerFor('Assessment Returned for Rework', ap.assessment_returned)),
+    ccCardHtml(ap.fsr_review_pending.length, 'FSR Review Pending', 'purple', ccSelectHandlerFor('FSR Review Pending', ap.fsr_review_pending)),
+    ccCardHtml(ap.fsr_returned.length, 'FSR Returned', 'red', ccSelectHandlerFor('FSR Returned for Rework', ap.fsr_returned)),
+    ccCardHtml(ap.insurer_approval_pending.length, 'Insurer Approval Pending', 'purple', ccSelectHandlerFor('Insurer Approval Pending', ap.insurer_approval_pending)),
+    ccCardHtml(ap.insured_consent_pending.length, 'Insured Consent Pending', 'purple', ccSelectHandlerFor('Insured Consent Pending', ap.insured_consent_pending)),
+    ccCardHtml(ap.decision_required.length, 'Decision Required', 'amber', ccSelectHandlerFor('Decision Required', ap.decision_required)),
+    ccCardHtml(cc.billing.bill_pending.length + cc.billing.payment_pending.length + cc.billing.partially_settled.length, 'Billing / Payment Pending', 'amber', ccSelectHandlerFor('Billing / Payment Pending', [...cc.billing.bill_pending, ...cc.billing.payment_pending, ...cc.billing.partially_settled])),
+  ];
+  document.getElementById('ccApprovalCards').innerHTML = approvalCards.join('');
+
+  // Live Team
+  const liveHtml = cc.team.live.length === 0
+    ? '<div class="task-empty">No active tracked task right now.</div>'
+    : cc.team.live.map(s => {
+        const staff = teamMember(s.staff_id);
+        const task = s.task;
+        return `<div class="cc-list-row clickable" onclick="${task ? `openTaskDetail('${task.id}')` : ''}">
+          <span>${esc(staff ? staff.name : s.staff_id)} — ${esc(task ? task.title : '(task removed)')}</span>
+          <span class="cc-job-sub">started ${new Date(s.started_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+        </div>`;
+      }).join('');
+  document.getElementById('ccLiveTeam').innerHTML = liveHtml;
+
+  // Staff Workload
+  document.getElementById('ccStaffWorkload').innerHTML = cc.team.workload.map(w => `
+    <div class="cc-list-row">
+      <span>${esc(w.name)}</span>
+      <span class="cc-job-sub">Open ${w.open_count} · Overdue ${w.overdue} · Waiting ${w.waiting} · ${formatTaskDuration(w.expected_minutes) || '0 min'} est.${w.tasks_without_duration ? ` (+${w.tasks_without_duration} unestimated)` : ''}</span>
+    </div>`).join('') || '<div class="task-empty">No staff.</div>';
+
+  // Workflow Bottlenecks
+  const maxCount = Math.max(1, ...cc.workflow.bottlenecks.map(b => b.count));
+  document.getElementById('ccBottlenecks').innerHTML = cc.workflow.bottlenecks.map(b => `
+    <div class="cc-list-row clickable" onclick="${ccSelectHandlerFor(b.label, b.jobs)}">
+      <span>${esc(b.label)}</span>
+      <span class="cc-job-sub">${b.count}</span>
+    </div>`).join('') || '<div class="task-empty">No open claims.</div>';
+
+  // Branch Workload
+  document.getElementById('ccBranches').innerHTML = cc.branches.map(b => `
+    <div class="cc-list-row clickable" onclick="${ccSelectHandlerFor(esc(b.name) + ' — Open Claims', branchRowsFor(b.branch_id))}">
+      <span>${esc(b.name)}</span>
+      <span class="cc-job-sub">Open ${b.open_claims} · Attention ${b.needs_attention} · Stalled ${b.stalled} · Overdue Tasks ${b.overdue_tasks}</span>
+    </div>`).join('') || '<div class="task-empty">No branches.</div>';
+
+  // Oldest Open Claims
+  document.getElementById('ccOldest').innerHTML = cc.oldest_open_claims.map(r => `
+    <div class="cc-list-row clickable" onclick="openJob('${r.job_id}')">
+      <span>${esc(r.job_id)} — ${esc(r.insured || '')}</span>
+      <span class="cc-job-sub">${r.age_days} days old · ${esc(WORKFLOW_HEALTH_LABELS[r.health] || r.health)}</span>
+    </div>`).join('') || '<div class="task-empty">No open claims.</div>';
+
+  // Data Issues
+  const badge = document.getElementById('ccDataIssuesCount');
+  badge.textContent = cc.data_issues.length;
+  badge.className = 'cc-badge' + (cc.data_issues.length === 0 ? ' zero' : '');
+  document.getElementById('ccDataIssues').innerHTML = cc.data_issues.length === 0
+    ? '<div class="task-empty">No data inconsistencies detected.</div>'
+    : cc.data_issues.map(r => `
+      <div class="cc-job-row health-${r.health}" onclick="openJob('${r.job_id}')">
+        <div>
+          <div class="cc-job-main">${esc(r.job_id)} — ${esc(r.insured || '')}</div>
+          <div class="cc-job-sub">${r.issues.map(i => esc(i.detail)).join(' · ')}</div>
+        </div>
+      </div>`).join('');
+
+  renderCcDrilldownOnly();
+}
+
+function needsAttentionRow(r) { return r.health !== 'on_track'; }
+function allCcRows() {
+  const cc = controlCentre;
+  if (!cc) return [];
+  // Every open-claim row the Control Centre knows about, deduplicated by
+  // job_id, gathered from the bottleneck buckets (which together cover
+  // every open claim exactly once, since every open claim has exactly one
+  // current_step — see buildWorkflowBottlenecks in worker.js).
+  const byId = {};
+  for (const b of cc.workflow.bottlenecks) for (const r of b.jobs) byId[r.job_id] = r;
+  for (const r of [...cc.approvals.decision_required, ...cc.ready_for_closure, ...cc.oldest_open_claims]) byId[r.job_id] = r;
+  return Object.values(byId);
+}
+function queryClaimsRows() {
+  const cc = controlCentre;
+  if (!cc) return [];
+  const byId = {};
+  for (const q of cc.queries) {
+    if (!byId[q.job_id]) byId[q.job_id] = allCcRows().find(r => r.job_id === q.job_id) || { job_id: q.job_id, insured: q.insured, health: 'on_track' };
+  }
+  return Object.values(byId);
+}
+function branchRowsFor(branchId) {
+  return allCcRows().filter(r => (r.branch_ids || []).includes(branchId));
 }
 
 // ── TASKS (V1.2) ─────────────────────────────────────────────

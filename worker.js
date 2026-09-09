@@ -2400,6 +2400,442 @@ async function listWorkflowAttention(db) {
   return rows;
 }
 
+// ── DIRECTOR CONTROL CENTRE (V1.6) ──────────────────────────────────
+// Pure aggregation over already-existing helpers/data — computes nothing
+// that isn't already derived elsewhere. Reuses V1.5's buildWorkflowContexts
+// / analyzeJobWorkflow (workflow phase/step/health/attention), V1.2-1.4's
+// listTasks/listLiveWork/computeTaskOverdue, and V1.1A's computeBilling
+// (folded into buildWorkflowContexts' per-job ctx.billing). No new source
+// of truth, no cache table, no `.run()` calls anywhere below — this whole
+// module is a GET-only view over data that already exists.
+function canAccessControlCentre(user) {
+  return isAdmin(user) || isDirectorRole(user);
+}
+
+// A job "needs attention" when workflow intelligence already flagged it as
+// anything other than perfectly on-track, or raised any attention alert —
+// both fields already exist on every analyzeJobWorkflow() result; this is
+// a filter over that output, not a second health calculation.
+function jobNeedsAttention(analysis) {
+  return analysis.workflow_health !== 'on_track' || analysis.attention.length > 0;
+}
+
+// Compact, list-friendly shape reused across every Control Centre
+// drill-down (bottlenecks, approvals, stalled, oldest, data issues, ...).
+function ccJobRow(r) {
+  return {
+    job_id: r.job_id, title: r.job.title, insured: r.job.insured,
+    claim_no: r.job.claim_no, branch_ids: r.job.branch_ids,
+    director_ids: r.job.director_ids, surveyor_ids: r.job.surveyor_ids,
+    backstaff_ids: r.job.backstaff_ids,
+    phase: r.analysis.phase, phase_label: r.analysis.phase_label,
+    current_step: r.analysis.current_step, current_step_label: r.analysis.current_step_label,
+    reason: r.analysis.reason, health: r.analysis.workflow_health,
+    days_since_activity: r.analysis.days_since_activity,
+  };
+}
+
+function buildControlSummary(openRows) {
+  const needsAttention = openRows.filter(r => jobNeedsAttention(r.analysis));
+  const stalled = openRows.filter(r => r.analysis.workflow_health === 'stalled');
+  // "Open Queries" at the top-card level counts CLAIMS with >=1 open query
+  // (a Director scanning cards cares how many claims need a reply, not the
+  // raw query count) — the Query Control section below shows every query.
+  const openQueryClaims = openRows.filter(r => r.analysis.attention.some(a => a.code === 'query_open'));
+  const readyForClosure = openRows.filter(r => r.analysis.current_step === 'ready_for_closure');
+  return {
+    open_claims: openRows.length,
+    needs_attention: needsAttention.length,
+    stalled: stalled.length,
+    open_queries: openQueryClaims.length,
+    ready_for_closure: readyForClosure.length,
+    // overdue_tasks filled in by the caller (needs the tasks list, not rows)
+  };
+}
+
+// Buckets every open claim by its current blocking workflow step — the
+// organization-wide "where is work backing up" view. `decide_required`
+// steps (Required=To Be Decided) are excluded here and surfaced instead
+// under Decision Required, since they aren't really "in progress" at that
+// step, they're stuck deciding whether the step applies at all.
+function buildWorkflowBottlenecks(openRows) {
+  const buckets = {};
+  const healthDist = { on_track: 0, watch: 0, attention: 0, stalled: 0 };
+  for (const r of openRows) {
+    healthDist[r.analysis.workflow_health] = (healthDist[r.analysis.workflow_health] || 0) + 1;
+    const isDecision = r.analysis.attention.some(a => a.code === 'decide_required');
+    if (isDecision || !r.analysis.current_step) continue;
+    const key = r.analysis.current_step;
+    const bucket = (buckets[key] ||= {
+      step: key, label: r.analysis.current_step_label, phase_label: r.analysis.phase_label,
+      count: 0, jobs: [],
+    });
+    bucket.count++;
+    bucket.jobs.push(ccJobRow(r));
+  }
+  const bottlenecks = Object.values(buckets).sort((a, b) => b.count - a.count);
+  return { bottlenecks, health_distribution: healthDist };
+}
+
+// Every queue below is read directly off analyzeJobWorkflow()'s existing
+// output (current_step / next_action.code / attention alerts) — none of
+// this re-derives approval/decision state from raw job fields.
+function buildApprovalQueues(openRows) {
+  const decisionRequired = [];
+  const decisionRequiredJobIds = new Set();
+  for (const r of openRows) {
+    const alert = r.analysis.attention.find(a => a.code === 'decide_required');
+    if (alert) {
+      decisionRequired.push({ ...ccJobRow(r), decision_step: alert.step, decision_label: alert.label });
+      decisionRequiredJobIds.add(r.job_id);
+    }
+  }
+  const directorAssessmentPending = openRows
+    .filter(r => r.analysis.current_step === 'director_verification' && r.analysis.next_action?.code !== 'rework_assessment')
+    .map(ccJobRow);
+  const assessmentReturned = openRows
+    .filter(r => r.analysis.next_action?.code === 'rework_assessment')
+    .map(ccJobRow);
+  const fsrReviewPending = openRows
+    .filter(r => r.analysis.current_step === 'fsr_final_verification' && r.analysis.next_action?.code !== 'rework_fsr')
+    .map(ccJobRow);
+  const fsrReturned = openRows
+    .filter(r => r.analysis.next_action?.code === 'rework_fsr')
+    .map(ccJobRow);
+  // Excludes decision-required jobs — a claim whose Insurer Approval
+  // Required is still "To Be Decided" isn't actually pending approval yet,
+  // it's pending a decision on whether the step applies at all (see
+  // Decision Required above).
+  const insurerApprovalPending = openRows
+    .filter(r => r.analysis.current_step === 'insurer_approval' && !decisionRequiredJobIds.has(r.job_id))
+    .map(ccJobRow);
+  const insuredConsentPending = openRows
+    .filter(r => r.analysis.current_step === 'insured_consent')
+    .map(ccJobRow);
+  return {
+    director_assessment_pending: directorAssessmentPending,
+    assessment_returned: assessmentReturned,
+    fsr_review_pending: fsrReviewPending,
+    fsr_returned: fsrReturned,
+    insurer_approval_pending: insurerApprovalPending,
+    insured_consent_pending: insuredConsentPending,
+    decision_required: decisionRequired,
+  };
+}
+
+// Billing/closure bucketing reuses ctx.billing (computeBilling's own
+// output, already attached to every context by buildWorkflowContexts) —
+// no second payment-status calculation. Only claims that have actually
+// reached the billing/closure phase are bucketed here (a claim can't be
+// "bill pending" while assessment/FSR steps are still open, by the same
+// sequencing analyzeJobWorkflow already enforces).
+function buildBillingControl(openRows) {
+  const billingRows = openRows.filter(r => r.analysis.phase === 'billing_closure');
+  const billPending = [], paymentPending = [], partiallySettled = [], readyForClosure = [], billingDecision = [];
+  for (const r of billingRows) {
+    const row = { ...ccJobRow(r), payment_status: r.ctx.billing.paymentStatus, outstanding_paise: r.ctx.billing.outstandingPaise };
+    if (r.analysis.current_step === 'billing_decision') billingDecision.push(row);
+    else if (r.analysis.current_step === 'billing') billPending.push(row);
+    else if (r.analysis.current_step === 'ready_for_closure') readyForClosure.push(row);
+    else if (r.ctx.billing.paymentStatus === 'part_payment') partiallySettled.push(row);
+    else if (r.ctx.billing.paymentStatus === 'unpaid') paymentPending.push(row);
+  }
+  return {
+    billing_decision: billingDecision, bill_pending: billPending,
+    payment_pending: paymentPending, partially_settled: partiallySettled,
+    ready_for_closure: readyForClosure,
+  };
+}
+
+// A task counts as unassigned when it has no assignee rows, or every one
+// of its assignees points at a staff_id that no longer exists (staff is
+// hard-deleted in this app — see deleteStaff() — so this is a real,
+// reachable data state, not a hypothetical).
+function isUnassignedTask(t, staffIds) {
+  return !(t.assignee_ids && t.assignee_ids.length && t.assignee_ids.some(id => staffIds.has(id)));
+}
+
+function taskOverdueDays(t, todayStr) {
+  if (!t.due_date) return 0;
+  return Math.max(0, dayIndex(todayStr) - dayIndex(t.due_date));
+}
+
+// Company-wide task aggregation. `expected_minutes_total_distinct` counts
+// each task once regardless of assignee count — deliberately different
+// from the per-staff workload sums (buildStaffWorkloads), where a shared
+// task legitimately counts against every assignee's own workload (see
+// HANDOFF_NOTES.md for the documented distinction the spec requires).
+function buildTasksBlock(allTasks, staffIds, todayStr) {
+  const open = allTasks.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+  const overdue = open.filter(t => t.is_overdue)
+    .sort((a, b) => TASK_TIE_PRIORITY_RANK[a.priority] - TASK_TIE_PRIORITY_RANK[b.priority]
+      || taskOverdueDays(b, todayStr) - taskOverdueDays(a, todayStr)
+      || dueSortKey(a).localeCompare(dueSortKey(b)));
+  const unassigned = open.filter(t => isUnassignedTask(t, staffIds));
+  const withDuration = open.filter(t => t.expected_minutes);
+  const withoutDuration = open.filter(t => !t.expected_minutes);
+  const staffOverdueCounts = {};
+  for (const t of overdue) {
+    for (const staffId of (t.assignee_ids || [])) {
+      staffOverdueCounts[staffId] = (staffOverdueCounts[staffId] || 0) + 1;
+    }
+  }
+  return {
+    overdue: overdue.map(t => ({
+      id: t.id, title: t.title, job_id: t.job_id, assignee_ids: t.assignee_ids,
+      priority: t.priority, status: t.status, due_date: t.due_date, due_time: t.due_time,
+      expected_minutes: t.expected_minutes, days_overdue: taskOverdueDays(t, todayStr),
+    })),
+    unassigned: unassigned.map(t => ({ id: t.id, title: t.title, job_id: t.job_id, status: t.status, priority: t.priority })),
+    staff_overdue_counts: staffOverdueCounts,
+    expected_minutes_total_distinct: withDuration.reduce((s, t) => s + t.expected_minutes, 0),
+    tasks_without_duration_count: withoutDuration.length,
+    open_count: open.length,
+  };
+}
+
+function buildStaffWorkloads(staffRows, allTasks, live, allSessions, todayStr, nowMs) {
+  const liveByStaff = {};
+  for (const s of live) liveByStaff[s.staff_id] = s;
+  const sessionsByStaff = {};
+  for (const s of allSessions) (sessionsByStaff[s.staff_id] ||= []).push(s);
+
+  const workloads = staffRows.map(staff => {
+    const mine = allTasks.filter(t => (t.assignee_ids || []).includes(staff.id));
+    const open = mine.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+    const dueToday = open.filter(t => t.due_date === todayStr);
+    const overdue = open.filter(t => t.is_overdue);
+    const waiting = open.filter(t => t.status === 'waiting');
+    const inProgress = open.filter(t => t.status === 'in_progress');
+    const withDuration = open.filter(t => t.expected_minutes);
+    const mySessions = sessionsByStaff[staff.id] || [];
+    const trackedTodaySeconds = mySessions
+      .filter(s => istDateOfTimestamp(s.started_at) === todayStr)
+      .reduce((sum, s) => sum + (s.ended_at ? (s.duration_seconds || 0) : (nowMs - s.started_at) / 1000), 0);
+    const activeSession = liveByStaff[staff.id];
+    return {
+      staff_id: staff.id, name: staff.name, role: staff.role,
+      open_count: open.length, due_today: dueToday.length, overdue: overdue.length,
+      waiting: waiting.length, in_progress: inProgress.length,
+      expected_minutes: withDuration.reduce((s, t) => s + t.expected_minutes, 0),
+      tasks_with_duration: withDuration.length, tasks_without_duration: open.length - withDuration.length,
+      currently_working_on_task_id: activeSession ? activeSession.task_id : null,
+      tracked_today_seconds: Math.round(trackedTodaySeconds),
+    };
+  });
+  workloads.sort((a, b) => b.overdue - a.overdue || b.due_today - a.due_today || b.open_count - a.open_count || a.name.localeCompare(b.name));
+  return workloads;
+}
+
+function buildBranchWorkloads(branchRows, openRows, allTasks) {
+  return branchRows.map(b => {
+    // A multi-branch job is counted under every branch handling it — see
+    // HANDOFF_NOTES.md. The global open-claim total (buildControlSummary)
+    // stays a distinct count regardless.
+    const jobsHere = openRows.filter(r => (r.job.branch_ids || []).includes(b.id));
+    const jobIdsHere = new Set(jobsHere.map(r => r.job_id));
+    const tasksHere = allTasks.filter(t => t.job_id && jobIdsHere.has(t.job_id));
+    const openTasksHere = tasksHere.filter(t => t.status !== 'completed' && t.status !== 'cancelled');
+    return {
+      branch_id: b.id, name: b.name, color: b.color,
+      open_claims: jobsHere.length,
+      needs_attention: jobsHere.filter(r => jobNeedsAttention(r.analysis)).length,
+      stalled: jobsHere.filter(r => r.analysis.workflow_health === 'stalled').length,
+      open_tasks: openTasksHere.length,
+      overdue_tasks: openTasksHere.filter(t => t.is_overdue).length,
+    };
+  });
+}
+
+// Real timestamps only (job creation date / deputation date), never a
+// fabricated "age in current step" — see spec's explicit caution. Prefers
+// date_intimation (doubles as Deputation Date) when it's a valid date,
+// otherwise falls back to the always-present created_at.
+function jobAgeMs(job, nowMs) {
+  if (job.date_intimation && EVENT_DATE_RE.test(job.date_intimation)) {
+    return nowMs - Date.parse(job.date_intimation + 'T00:00:00Z');
+  }
+  return nowMs - job.created_at;
+}
+function buildOldestOpenClaims(openRows, nowMs) {
+  return [...openRows]
+    .sort((a, b) => jobAgeMs(b.job, nowMs) - jobAgeMs(a.job, nowMs))
+    .slice(0, 10)
+    .map(r => ({ ...ccJobRow(r), age_days: Math.floor(jobAgeMs(r.job, nowMs) / 86400000) }));
+}
+
+// Data Issues surfaces exactly the two categories analyzeJobWorkflow()
+// already detects (workflow_inconsistency, task_milestone_mismatch) —
+// no new validation engine, per spec's explicit caution against one.
+function buildDataIssues(openRows) {
+  const flagged = [];
+  for (const r of openRows) {
+    const issues = r.analysis.attention.filter(a => a.code === 'workflow_inconsistency' || a.code === 'task_milestone_mismatch');
+    if (issues.length > 0) flagged.push({ ...ccJobRow(r), issues });
+  }
+  return flagged;
+}
+
+// Document follow-up / survey / final report control — each bucket reuses
+// current_step, attention alerts, and existing job fields directly; no new
+// derivation beyond grouping.
+function buildDocumentFollowup(openRows) {
+  const atDocs = openRows.filter(r => r.analysis.current_step === 'documents');
+  return {
+    reminder_due: atDocs.filter(r => r.analysis.attention.some(a => a.code === 'reminder_due')).map(ccJobRow),
+    awaiting_documents: atDocs.map(ccJobRow),
+    no_recent_reminder: atDocs.filter(r => r.ctx.reminders.length === 0).map(ccJobRow),
+    recently_received_verification_pending: atDocs.filter(r => r.ctx.docReceipts.length > 0).map(ccJobRow),
+  };
+}
+function buildSurveyControl(openRows) {
+  return {
+    awaiting_inspection: openRows.filter(r => r.job.survey_status === 'not_surveyed').map(ccJobRow),
+    survey_in_progress: openRows.filter(r => r.job.survey_status === 'in_progress').map(ccJobRow),
+    completed_preliminary_pending: openRows.filter(r => r.job.survey_status === 'completed' && ['ila', 'lor'].includes(r.analysis.current_step)).map(ccJobRow),
+  };
+}
+function buildFinalReportControl(openRows) {
+  return {
+    fsr_preparation: openRows.filter(r => r.analysis.current_step === 'fsr_preparation').map(ccJobRow),
+    fsr_review: openRows.filter(r => r.analysis.current_step === 'fsr_final_verification').map(ccJobRow),
+    ready_to_submit: openRows.filter(r => r.analysis.current_step === 'fsr_submission').map(ccJobRow),
+    submitted_dispatch_pending: openRows.filter(r => ['dispatch', 'pod'].includes(r.analysis.current_step)).map(ccJobRow),
+    query_open: openRows.filter(r => r.analysis.attention.some(a => a.code === 'query_open')).map(ccJobRow),
+  };
+}
+
+async function buildQueryControl(db, openRows) {
+  const rowByJob = {};
+  for (const r of openRows) rowByJob[r.job_id] = r;
+  const { results: queries } = await db.prepare("SELECT * FROM claim_queries WHERE status != 'closed' ORDER BY query_date ASC").all();
+  const nowMs = Date.now();
+  return queries
+    .filter(q => rowByJob[q.job_id])
+    .map(q => {
+      const r = rowByJob[q.job_id];
+      return {
+        job_id: q.job_id, title: r.job.title, insured: r.job.insured,
+        query_id: q.id, query_date: q.query_date, query_from: q.query_from, query_type: q.query_type,
+        query_details: q.query_details, status: q.status,
+        // No dedicated query-assignee field exists (see schema.sql claim_queries)
+        // — responsibility is shown via the claim's existing surveyor/backstaff
+        // responsibility, not a fabricated new owner field.
+        surveyor_ids: r.job.surveyor_ids, backstaff_ids: r.job.backstaff_ids,
+        days_open: daysSinceTs(q.created_at, nowMs),
+      };
+    });
+}
+
+// "Today" is defined purely from real recorded timestamps — nothing here
+// is fabricated. Omit rather than guess wherever no reliable field exists.
+async function buildDailySnapshot(db, analyzed, allTasks, allSessions, todayStr, nowMs) {
+  const { results: visitDates } = await db.prepare('SELECT visit_date FROM survey_visits').all();
+  const { results: feeReceiptDates } = await db.prepare('SELECT receipt_date FROM fee_receipts').all();
+
+  const tasksCompletedToday = allTasks.filter(t => t.completed_at && istDateOfTimestamp(t.completed_at) === todayStr).length;
+  const tasksDueToday = allTasks.filter(t => t.due_date === todayStr && t.status !== 'completed' && t.status !== 'cancelled').length;
+  const newJobsToday = analyzed.filter(r => istDateOfTimestamp(r.job.created_at) === todayStr).length;
+  const fsrSubmittedToday = analyzed.filter(r => r.job.fsr_submission_date === todayStr).length;
+  const billsRaisedToday = analyzed.filter(r => r.job.bill_date === todayStr).length;
+  const paymentsReceivedToday = feeReceiptDates.filter(f => f.receipt_date === todayStr).length;
+  const closedToday = analyzed.filter(r => r.job.closure_date === todayStr).length;
+  const surveysToday = visitDates.filter(v => v.visit_date === todayStr).length;
+
+  const trackedTodaySeconds = allSessions
+    .filter(s => istDateOfTimestamp(s.started_at) === todayStr)
+    .reduce((sum, s) => sum + (s.ended_at ? (s.duration_seconds || 0) : (nowMs - s.started_at) / 1000), 0);
+
+  return {
+    surveys_today: surveysToday, tasks_due_today: tasksDueToday, tasks_completed_today: tasksCompletedToday,
+    new_jobs_today: newJobsToday, fsr_submitted_today: fsrSubmittedToday, bills_raised_today: billsRaisedToday,
+    payments_received_today: paymentsReceivedToday, claims_closed_today: closedToday,
+    tracked_task_work_today_seconds: Math.round(trackedTodaySeconds),
+  };
+}
+
+// The single Control Centre entry point — GET-only, zero .run() calls.
+// Builds every section from one shared pass over buildWorkflowContexts()
+// (mirrors V1.5's "fetch once, group in memory" pattern) rather than
+// issuing per-section or per-job queries.
+async function buildDirectorControlCentre(db, user) {
+  const nowMs = Date.now();
+  const todayStr = todayIST();
+
+  const contexts = await buildWorkflowContexts(db, null);
+  const analyzed = Object.keys(contexts).map(jobId => {
+    const ctx = contexts[jobId];
+    return { job_id: jobId, job: ctx.job, ctx, analysis: analyzeJobWorkflow(ctx.job, ctx) };
+  });
+  const openRows = analyzed.filter(r => r.job.stage !== 'closed');
+
+  const allTasks = await listTasks(db);
+  const { results: staffRows } = await db.prepare('SELECT id, name, role, access_role FROM staff ORDER BY created_at ASC').all();
+  const staffIds = new Set(staffRows.map(s => s.id));
+  const branchRows = await listBranches(db);
+  const live = await listLiveWork(db);
+  const { results: allSessions } = await db.prepare(
+    'SELECT task_id, staff_id, started_at, ended_at, duration_seconds FROM task_work_sessions ORDER BY started_at DESC LIMIT 3000'
+  ).all();
+
+  const summary = buildControlSummary(openRows);
+  const tasksBlock = buildTasksBlock(allTasks, staffIds, todayStr);
+  summary.overdue_tasks = tasksBlock.overdue.length;
+
+  const workflow = buildWorkflowBottlenecks(openRows);
+  const approvals = buildApprovalQueues(openRows);
+  const billing = buildBillingControl(openRows);
+  const team = {
+    live,
+    workload: buildStaffWorkloads(staffRows, allTasks, live, allSessions, todayStr, nowMs),
+  };
+  const branches = buildBranchWorkloads(branchRows, openRows, allTasks);
+  const oldestOpenClaims = buildOldestOpenClaims(openRows, nowMs);
+  const dataIssues = buildDataIssues(openRows);
+  const documentFollowup = buildDocumentFollowup(openRows);
+  const survey = buildSurveyControl(openRows);
+  const finalReport = buildFinalReportControl(openRows);
+  const queries = await buildQueryControl(db, openRows);
+  const today = await buildDailySnapshot(db, analyzed, allTasks, allSessions, todayStr, nowMs);
+
+  const openNoActiveTasks = openRows
+    .filter(r => r.ctx.tasks.every(t => t.status === 'completed' || t.status === 'cancelled'))
+    .map(ccJobRow);
+  const noTaskForNextAction = openRows
+    .filter(r => r.analysis.attention.some(a => a.code === 'no_matching_task'))
+    .map(ccJobRow);
+
+  const myResponsible = openRows.filter(r => (r.job.director_ids || []).includes(user.id));
+
+  return {
+    generated_at: nowMs,
+    summary,
+    workflow,
+    approvals,
+    tasks: tasksBlock,
+    team,
+    branches,
+    billing,
+    ready_for_closure: openRows.filter(r => r.analysis.current_step === 'ready_for_closure').map(ccJobRow),
+    oldest_open_claims: oldestOpenClaims,
+    data_issues: dataIssues,
+    document_followup: documentFollowup,
+    survey,
+    final_report: finalReport,
+    queries,
+    today,
+    open_claims_no_active_tasks: openNoActiveTasks,
+    next_action_without_task: noTaskForNextAction,
+    my_responsible: {
+      open: myResponsible.length,
+      needs_attention: myResponsible.filter(r => jobNeedsAttention(r.analysis)).length,
+      stalled: myResponsible.filter(r => r.analysis.workflow_health === 'stalled').length,
+      director_approval_pending: myResponsible.filter(r => r.analysis.current_step === 'director_verification' && r.analysis.next_action?.code !== 'rework_assessment').length,
+      ready_for_closure: myResponsible.filter(r => r.analysis.current_step === 'ready_for_closure').length,
+    },
+  };
+}
+
 async function getSetting(db, key) {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first();
   return row ? row.value : null;
@@ -2985,6 +3421,12 @@ export default {
           if (!analysis) return error('job not found', 404);
           return json(analysis);
         }
+      }
+
+      // ── DIRECTOR CONTROL CENTRE (V1.6) — Admin/Director only, read-only ──
+      if (pathname === '/api/control-centre' && request.method === 'GET') {
+        if (!canAccessControlCentre(user)) return error('Only an Admin or Director may view the Control Centre', 403);
+        return json(await buildDirectorControlCentre(db, user));
       }
 
       {
