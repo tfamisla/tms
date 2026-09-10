@@ -436,6 +436,28 @@ details.sp-section[open] summary{margin-bottom:0}
 .ac-health-closed{color:var(--text-faint)}
 .ac-empty{padding:40px;text-align:center;color:var(--text-faint);font-size:13px}
 
+/* ── REQUIREMENTS & DOCUMENT INTELLIGENCE (V1.7) ── */
+.req-summary-bar{display:flex;gap:16px;flex-wrap:wrap;background:var(--ground);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:10px;font-size:12px}
+.req-summary-bar .req-stat-num{font-family:'DM Mono',monospace;font-weight:700;font-size:15px}
+.req-toolbar{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.req-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12.5px;flex-wrap:wrap}
+.req-row:last-child{border-bottom:none}
+.req-name{font-weight:600;flex:1;min-width:140px}
+.req-meta{color:var(--text-faint);font-size:11px}
+.req-badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:100px;white-space:nowrap}
+.req-badge.pending{background:var(--red-bg);color:var(--red)}
+.req-badge.partial{background:var(--amber-bg);color:var(--amber)}
+.req-badge.received{background:var(--green-bg);color:var(--green)}
+.req-badge.not_applicable{background:var(--ground);color:var(--text-faint);border:1px solid var(--border)}
+.req-badge.waived{background:var(--purple-bg);color:var(--purple)}
+.req-mandatory-tag{font-size:10px;color:var(--text-faint);border:1px solid var(--border);border-radius:100px;padding:1px 7px}
+.req-never{color:var(--red);font-size:10.5px;font-weight:600}
+.rm-row,.rt-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px;font-size:12.5px;background:var(--surface)}
+.rm-row.inactive,.rt-row.inactive{opacity:.55}
+.rm-name,.rt-name{font-weight:600;flex:1}
+.rtf-item-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px}
+.rtf-item-row:last-child{border-bottom:none}
+
 /* ── MISC ── */
 .mono{font-family:'DM Mono',monospace}
 @media(max-width:640px){
@@ -541,6 +563,13 @@ details.sp-section[open] summary{margin-bottom:0}
       </select>
       <select class="log-filter-sel" id="ac-branch" onchange="renderAllClaimsView()"><option value="">All branches</option></select>
       <select class="log-filter-sel" id="ac-director" onchange="renderAllClaimsView()"><option value="">All directors</option></select>
+      <select class="log-filter-sel" id="ac-doc-status" onchange="renderAllClaimsView()">
+        <option value="">Any document status</option>
+        <option value="not_started">Not Set</option>
+        <option value="awaiting_documents">Awaiting Documents</option>
+        <option value="partially_received">Partial</option>
+        <option value="ready_for_verification">Ready for Verification</option>
+      </select>
       <button type="button" class="btn-secondary" onclick="exportAllClaimsToExcel()">⬇ Export to Excel</button>
       <span class="ac-count" id="ac-count"></span>
     </div>
@@ -660,6 +689,9 @@ details.sp-section[open] summary{margin-bottom:0}
       <div class="mw-section-hdr">Approvals &amp; Workflow Bottlenecks</div>
       <div class="cc-card-row" id="ccApprovalCards"></div>
 
+      <div class="mw-section-hdr">Document Control</div>
+      <div class="cc-card-row" id="ccDocControlCards"></div>
+
       <div class="mw-section-hdr">Team &amp; Live Operations</div>
       <div class="cc-two-col">
         <div class="cc-panel">
@@ -713,6 +745,19 @@ details.sp-section[open] summary{margin-bottom:0}
     <div class="assigned-grid" id="insurerGrid"></div>
     <div class="sp-section-label" style="margin-top:24px">TFAM Branches</div>
     <div class="assigned-grid" id="branchGrid"></div>
+    <div class="sp-section-label" style="margin-top:24px">Requirement Master <button type="button" class="btn-new" id="addRequirementMasterBtn" onclick="openRequirementMasterForm()" hidden style="margin-left:10px;padding:4px 10px;font-size:12px">+ Add Requirement</button></div>
+    <div class="log-toolbar" id="rmFilters">
+      <input class="task-search" id="rm-search" placeholder="Search requirements" oninput="renderRequirementMasterAdmin()">
+      <select class="log-filter-sel" id="rm-category-filter" onchange="renderRequirementMasterAdmin()"><option value="">All categories</option></select>
+      <select class="log-filter-sel" id="rm-active-filter" onchange="renderRequirementMasterAdmin()">
+        <option value="active">Active only</option><option value="">All (incl. inactive)</option>
+      </select>
+    </div>
+    <div id="requirementMasterList"></div>
+
+    <div class="sp-section-label" style="margin-top:24px">Requirement Templates <button type="button" class="btn-new" id="addRequirementTemplateBtn" onclick="openRequirementTemplateForm()" hidden style="margin-left:10px;padding:4px 10px;font-size:12px">+ Add Template</button></div>
+    <div id="requirementTemplateList"></div>
+
     <div class="sp-section-label" style="margin-top:24px">Settings</div>
     <div class="log-toolbar" id="settingsPanel" hidden>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px">
@@ -1090,6 +1135,169 @@ details.sp-section[open] summary{margin-bottom:0}
     <div class="modal-footer">
       <button class="btn-primary" onclick="submitChangePassword()">Save Password</button>
       <button class="btn-secondary" onclick="closeChangePassword()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── REQUIREMENT MASTER FORM (V1.7, Admin only) ── -->
+<div class="modal-overlay" id="requirementMasterModal" hidden onclick="event.target===this&&closeRequirementMasterForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="rmf-modal-title">Add Requirement</h2>
+      <button class="sp-close" onclick="closeRequirementMasterForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Requirement Name *</label>
+          <input id="rmf-name" placeholder="e.g. Fire Brigade Report" required>
+        </div>
+        <div class="form-field">
+          <label>Category</label>
+          <select id="rmf-category"></select>
+        </div>
+        <div class="form-field">
+          <label>Type</label>
+          <select id="rmf-type"></select>
+        </div>
+        <div class="form-field full">
+          <label>Description</label>
+          <textarea class="notes-area" id="rmf-description" rows="2" placeholder="Internal note about what this covers"></textarea>
+        </div>
+        <div class="form-field full">
+          <label>Request Text <span style="color:var(--text-faint);font-weight:400">(used when generating LOR wording)</span></label>
+          <textarea class="notes-area" id="rmf-request-text" rows="2" placeholder="e.g. Purchase invoices pertaining to the affected items/property."></textarea>
+        </div>
+        <div class="form-field">
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rmf-default-mandatory" checked> Mandatory by default</label>
+        </div>
+        <div class="form-field" id="rmf-active-wrap" hidden>
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rmf-active"> Active</label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitRequirementMasterForm()" id="rmf-submit-btn">Add Requirement</button>
+      <button class="btn-secondary" onclick="closeRequirementMasterForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── REQUIREMENT TEMPLATE EDITOR (V1.7, Admin only) ── -->
+<div class="modal-overlay" id="requirementTemplateModal" hidden onclick="event.target===this&&closeRequirementTemplateForm()">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-hdr">
+      <h2 id="rtf-modal-title">Add Requirement Template</h2>
+      <button class="sp-close" onclick="closeRequirementTemplateForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>Template Name *</label>
+          <input id="rtf-name" placeholder="e.g. Fire — Stock" required>
+        </div>
+        <div class="form-field">
+          <label>Department (optional matching hint)</label>
+          <input id="rtf-department" placeholder="e.g. Miscellaneous">
+        </div>
+        <div class="form-field">
+          <label>Peril (optional matching hint)</label>
+          <input id="rtf-peril" placeholder="e.g. Fire">
+        </div>
+        <div class="form-field full">
+          <label>Policy Name (optional matching hint)</label>
+          <input id="rtf-policy-name" placeholder="e.g. Standard Fire & Special Perils">
+        </div>
+        <div class="form-field full">
+          <label>Description</label>
+          <textarea class="notes-area" id="rtf-description" rows="2"></textarea>
+        </div>
+        <div class="form-field full" id="rtf-active-wrap" hidden>
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="rtf-active"> Active</label>
+        </div>
+        <div class="form-field full">
+          <label>Requirements in this template</label>
+          <div class="bi-preview-wrap" style="max-height:260px" id="rtf-items-list"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitRequirementTemplateForm()" id="rtf-submit-btn">Save Template</button>
+      <button class="btn-secondary" onclick="closeRequirementTemplateForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── APPLY TEMPLATE MODAL (Job Detail, V1.7) ── -->
+<div class="modal-overlay" id="applyTemplateModal" hidden onclick="event.target===this&&closeApplyTemplateModal()">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-hdr">
+      <h2 id="atm-title">Apply Requirement Template</h2>
+      <button class="sp-close" onclick="closeApplyTemplateModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="atm-suggested"></div>
+      <div class="form-field full">
+        <label>Template</label>
+        <select id="atm-template-select" onchange="renderApplyTemplatePreview()"></select>
+      </div>
+      <div id="atm-preview"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitApplyTemplate()">Apply Selected Requirements</button>
+      <button class="btn-secondary" onclick="closeApplyTemplateModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADD / EDIT JOB REQUIREMENT MODAL (V1.7) ── -->
+<div class="modal-overlay" id="jobRequirementModal" hidden onclick="event.target===this&&closeJobRequirementForm()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="jrf-title">Add Requirement</h2>
+      <button class="sp-close" onclick="closeJobRequirementForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid">
+        <div class="form-field full">
+          <label>From Master (optional)</label>
+          <select id="jrf-master-select" onchange="onJrfMasterChange()"><option value="">— Custom requirement —</option></select>
+        </div>
+        <div class="form-field full">
+          <label>Requirement Name *</label>
+          <input id="jrf-name" placeholder="e.g. Clarification regarding stock quantity">
+        </div>
+        <div class="form-field">
+          <label>Type</label>
+          <select id="jrf-type"></select>
+        </div>
+        <div class="form-field">
+          <label style="display:flex;align-items:center;gap:6px;margin-top:20px"><input type="checkbox" id="jrf-mandatory" checked> Mandatory</label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="submitJobRequirementForm()">Add Requirement</button>
+      <button class="btn-secondary" onclick="closeJobRequirementForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── REQUIREMENT STATUS / WAIVER / FOLLOW-UP MODAL (V1.7) ── -->
+<div class="modal-overlay" id="reqStatusModal" hidden onclick="event.target===this&&closeReqStatusModal()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="rsm-title">Update Requirement</h2>
+      <button class="sp-close" onclick="closeReqStatusModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-grid" id="rsm-fields"></div>
+      <div class="sp-section-label" style="margin-top:14px">History</div>
+      <div id="rsm-history" style="font-size:12.5px;color:var(--text-sec)"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" id="rsm-save-btn" onclick="submitReqStatusModal()">Save</button>
+      <button class="btn-secondary" onclick="closeReqStatusModal()">Cancel</button>
     </div>
   </div>
 </div>
@@ -1917,9 +2125,13 @@ function onLoggedIn() {
   document.getElementById('addBranchBtn').hidden = !isAdminUser();
   document.getElementById('controlCentreNavBtn').hidden = !(isAdminUser() || /director/i.test(currentUserRecord.role || ''));
   document.getElementById('bulkImportBtn').hidden = !(isAdminUser() || /director/i.test(currentUserRecord.role || ''));
+  document.getElementById('addRequirementMasterBtn').hidden = !isAdminUser();
+  document.getElementById('addRequirementTemplateBtn').hidden = !isAdminUser();
   buildNewJobAssign();
   buildLogFilters();
   restoreAvailableMinutesFilter();
+  loadRequirementMaster();
+  loadRequirementTemplates();
   fetchAll();
   if (!pollTimer) pollTimer = setInterval(fetchAll, 5000);
   if (!taskCardTimerInterval) startTaskCardTimers();
@@ -2318,6 +2530,7 @@ function openJob(id) {
   toggleHardCopyFields();
   toggleBillFields();
   loadJobWorkflow(id);
+  loadJobRequirements(id);
 
   document.getElementById('overlay').classList.add('open');
   document.getElementById('sidePanel').classList.add('open');
@@ -2326,6 +2539,7 @@ function openJob(id) {
 function closePanel() {
   openJobId = null;
   currentJobWorkflow = null;
+  currentJobRequirements = [];
   document.getElementById('overlay').classList.remove('open');
   document.getElementById('sidePanel').classList.remove('open');
 }
@@ -2347,6 +2561,8 @@ const WORKFLOW_ALERT_TEXT = {
   payment_pending: () => 'Payment outstanding',
   task_milestone_mismatch: a => a.detail,
   workflow_inconsistency: a => a.detail,
+  requirement_reminder_due: a => `Requirement follow-up due${a.next_followup_date ? ' — ' + a.next_followup_date : ''}`,
+  no_requirement_checklist: () => 'Requirement checklist not established',
 };
 // Client-side mirror of worker.js's WORKFLOW_STEPS labels/order — display
 // only (used for the timeline strip); the actual applicability/completion
@@ -2461,6 +2677,15 @@ let acSortDir = 'desc';
 function acBranchNames(j) { return (j.branch_ids || []).map(id => { const b = branchMember(id); return b ? b.name : id; }).join(', '); }
 function acDirectorNames(j) { return (j.director_ids || []).map(id => { const m = teamMember(id); return m ? m.name : id; }).join(', '); }
 function acWorkflowOf(jobId) { return (workflowAttention || []).find(r => r.job_id === jobId) || null; }
+// V1.7: document_readiness rides along on the same already-fetched
+// /api/workflow/attention row — no second endpoint for All Claims.
+function acDocStatusOf(j) {
+  if (j.stage === 'closed') return { key: '', label: '—' };
+  const wf = acWorkflowOf(j.id);
+  const dr = wf && wf.document_readiness;
+  if (!dr) return { key: 'not_started', label: 'Not Set' };
+  return { key: dr.status, label: DOC_READINESS_LABELS[dr.status] || dr.status };
+}
 function acHealthOf(j) {
   if (j.stage === 'closed') return { label: 'Closed', cls: 'closed', rank: -1, step: 'Closed' };
   const wf = acWorkflowOf(j.id);
@@ -2483,6 +2708,7 @@ const AC_COLUMNS = [
   { key: 'stage', label: 'Stage', sort: j => j.stage },
   { key: 'step', label: 'Current Step', sort: j => acHealthOf(j).step.toLowerCase() },
   { key: 'health', label: 'Health', sort: j => acHealthOf(j).rank },
+  { key: 'doc_status', label: 'Documents', sort: j => acDocStatusOf(j).label },
   { key: 'branch', label: 'Branch', sort: j => acBranchNames(j).toLowerCase() },
   { key: 'director', label: 'Director', sort: j => acDirectorNames(j).toLowerCase() },
   { key: 'date_intimation', label: 'Deputation Date', sort: j => j.date_intimation || '' },
@@ -2519,12 +2745,14 @@ function getFilteredSortedClaims() {
   const stage = document.getElementById('ac-stage').value;
   const branch = document.getElementById('ac-branch').value;
   const director = document.getElementById('ac-director').value;
+  const docStatus = document.getElementById('ac-doc-status').value;
 
   let rows = jobs.slice();
   if (stage === '__active__') rows = rows.filter(j => j.stage !== 'closed');
   else if (stage) rows = rows.filter(j => j.stage === stage);
   if (branch) rows = rows.filter(j => (j.branch_ids || []).includes(branch));
   if (director) rows = rows.filter(j => (j.director_ids || []).includes(director));
+  if (docStatus) rows = rows.filter(j => acDocStatusOf(j).key === docStatus);
   if (search) {
     rows = rows.filter(j => `${j.id} ${j.insured || ''} ${j.insurer || ''} ${j.claim_no || ''} ${j.policy_no || ''}`.toLowerCase().includes(search));
   }
@@ -2571,6 +2799,7 @@ function renderAllClaimsView() {
       <td><span class="ac-stage-pill" style="background:${stageInfo ? stageInfo.color : '#6B7280'}">${esc(stageInfo ? stageInfo.label : j.stage)}</span></td>
       <td>${esc(health.step)}</td>
       <td class="ac-health-${health.cls}">${esc(health.label)}</td>
+      <td>${esc(acDocStatusOf(j).label)}</td>
       <td>${esc(acBranchNames(j) || '—')}</td>
       <td>${esc(acDirectorNames(j) || '—')}</td>
       <td>${esc(j.date_intimation || '—')}</td>
@@ -2606,6 +2835,7 @@ function exportAllClaimsToExcel() {
       'Stage': stageInfo ? stageInfo.label : j.stage,
       'Current Step': health.step,
       'Health': health.label,
+      'Documents': acDocStatusOf(j).label,
       'Branch': acBranchNames(j),
       'Director': acDirectorNames(j),
       'Deputation Date': j.date_intimation || '',
@@ -2620,6 +2850,455 @@ function exportAllClaimsToExcel() {
   XLSX.utils.book_append_sheet(wb, ws, 'Claims');
   const dateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   XLSX.writeFile(wb, `tms-claims-export-${dateStr}.xlsx`);
+}
+
+// ── REQUIREMENTS & DOCUMENT INTELLIGENCE (V1.7) ─────────────────────
+// Never re-derives readiness/status logic client-side — every status,
+// count, and "reminder due" figure comes straight from the server
+// (computeDocumentReadiness / analyzeJobWorkflow), this module only
+// renders it and collects user actions.
+const REQUIREMENT_TYPES_CLIENT = ['document', 'information', 'clarification', 'certificate', 'statement', 'report', 'invoice', 'quotation', 'consent', 'explanation', 'other'];
+const REQUIREMENT_TYPE_LABELS_CLIENT = { document: 'Document', information: 'Information', clarification: 'Clarification', certificate: 'Certificate', statement: 'Statement', report: 'Report', invoice: 'Invoice', quotation: 'Quotation', consent: 'Consent', explanation: 'Explanation', other: 'Other' };
+const REQUIREMENT_CATEGORIES_CLIENT = ['Claim', 'Policy', 'Ownership', 'Loss', 'Repair', 'Purchase', 'Financial', 'Fire', 'Theft', 'Machinery', 'Stock', 'Marine', 'Motor', 'BI / LOP', 'Legal', 'Other'];
+const REQUIREMENT_STATUS_LABELS_CLIENT = { pending: 'Pending', partial: 'Partial', received: 'Received', not_applicable: 'Not Applicable', waived: 'Waived' };
+const DOC_READINESS_LABELS = { not_started: 'Not Set', awaiting_documents: 'Awaiting Documents', partially_received: 'Partial', ready_for_verification: 'Ready for Verification' };
+
+let REQUIREMENT_MASTER = [];
+let REQUIREMENT_TEMPLATES = [];
+let currentJobRequirements = [];
+let rtfSelectedItems = {}; // requirement_id -> { mandatory }
+let editingRequirementMasterId = null;
+let editingRequirementTemplateId = null;
+let atmActiveTemplate = null;
+let atmDeselected = new Set();
+let rsmEditingReqId = null;
+let rsmAction = null;
+
+async function loadRequirementMaster() {
+  try { REQUIREMENT_MASTER = await apiGet('/api/requirements/master'); } catch (e) { /* non-fatal */ }
+  renderRequirementMasterAdmin();
+}
+async function loadRequirementTemplates() {
+  try { REQUIREMENT_TEMPLATES = await apiGet('/api/requirement-templates'); } catch (e) { /* non-fatal */ }
+  renderRequirementTemplatesAdmin();
+}
+
+function fillSelect(el, options, selected) {
+  el.innerHTML = options.map(([v, l]) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${esc(l)}</option>`).join('');
+}
+
+// ── Admin: Requirement Master ──
+function renderRequirementMasterAdmin() {
+  const el = document.getElementById('requirementMasterList');
+  if (!el) return;
+  const catSel = document.getElementById('rm-category-filter');
+  if (catSel.options.length <= 1) catSel.innerHTML += REQUIREMENT_CATEGORIES_CLIENT.map(c => `<option value="${c}">${c}</option>`).join('');
+
+  const search = (document.getElementById('rm-search').value || '').trim().toLowerCase();
+  const catFilter = document.getElementById('rm-category-filter').value;
+  const activeFilter = document.getElementById('rm-active-filter').value;
+  let rows = REQUIREMENT_MASTER.slice();
+  if (catFilter) rows = rows.filter(r => r.category === catFilter);
+  if (activeFilter === 'active') rows = rows.filter(r => r.is_active);
+  if (search) rows = rows.filter(r => r.name.toLowerCase().includes(search));
+
+  el.innerHTML = rows.length === 0 ? '<div class="task-empty">No requirements yet.</div>' : rows.map(r => `
+    <div class="rm-row ${r.is_active ? '' : 'inactive'}">
+      <span class="rm-name">${esc(r.name)}</span>
+      <span class="req-meta">${esc(r.category)} · ${esc(REQUIREMENT_TYPE_LABELS_CLIENT[r.requirement_type] || r.requirement_type)}</span>
+      <span class="req-mandatory-tag">${r.default_mandatory ? 'Mandatory by default' : 'Optional by default'}</span>
+      ${!r.is_active ? '<span class="req-badge not_applicable">Inactive</span>' : ''}
+      ${isAdminUser() ? `<button type="button" class="wh-correct-btn" onclick="openRequirementMasterForm('${r.id}')">Edit</button>` : ''}
+    </div>`).join('');
+}
+
+function openRequirementMasterForm(id) {
+  editingRequirementMasterId = id || null;
+  const catSel = document.getElementById('rmf-category');
+  fillSelect(catSel, REQUIREMENT_CATEGORIES_CLIENT.map(c => [c, c]), 'Other');
+  fillSelect(document.getElementById('rmf-type'), REQUIREMENT_TYPES_CLIENT.map(t => [t, REQUIREMENT_TYPE_LABELS_CLIENT[t]]), 'document');
+  document.getElementById('rmf-active-wrap').hidden = !id;
+  if (id) {
+    const r = REQUIREMENT_MASTER.find(x => x.id === id);
+    document.getElementById('rmf-modal-title').textContent = 'Edit Requirement';
+    document.getElementById('rmf-submit-btn').textContent = 'Save Changes';
+    document.getElementById('rmf-name').value = r.name;
+    catSel.value = r.category;
+    document.getElementById('rmf-type').value = r.requirement_type;
+    document.getElementById('rmf-description').value = r.description || '';
+    document.getElementById('rmf-request-text').value = r.request_text || '';
+    document.getElementById('rmf-default-mandatory').checked = !!r.default_mandatory;
+    document.getElementById('rmf-active').checked = !!r.is_active;
+  } else {
+    document.getElementById('rmf-modal-title').textContent = 'Add Requirement';
+    document.getElementById('rmf-submit-btn').textContent = 'Add Requirement';
+    document.getElementById('rmf-name').value = '';
+    document.getElementById('rmf-description').value = '';
+    document.getElementById('rmf-request-text').value = '';
+    document.getElementById('rmf-default-mandatory').checked = true;
+  }
+  document.getElementById('requirementMasterModal').hidden = false;
+}
+function closeRequirementMasterForm() { document.getElementById('requirementMasterModal').hidden = true; }
+async function submitRequirementMasterForm() {
+  const name = document.getElementById('rmf-name').value.trim();
+  if (!name) { alert('Requirement Name is required.'); return; }
+  const body = {
+    name, category: document.getElementById('rmf-category').value, requirement_type: document.getElementById('rmf-type').value,
+    description: document.getElementById('rmf-description').value, request_text: document.getElementById('rmf-request-text').value,
+    default_mandatory: document.getElementById('rmf-default-mandatory').checked,
+  };
+  try {
+    if (editingRequirementMasterId) {
+      body.is_active = document.getElementById('rmf-active').checked;
+      await apiPut('/api/requirements/master/' + encodeURIComponent(editingRequirementMasterId), body);
+    } else {
+      await apiPost('/api/requirements/master', body);
+    }
+    closeRequirementMasterForm();
+    await loadRequirementMaster();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// ── Admin: Requirement Templates ──
+function renderRequirementTemplatesAdmin() {
+  const el = document.getElementById('requirementTemplateList');
+  if (!el) return;
+  el.innerHTML = REQUIREMENT_TEMPLATES.length === 0 ? '<div class="task-empty">No templates yet.</div>' : REQUIREMENT_TEMPLATES.map(t => `
+    <div class="rt-row ${t.is_active ? '' : 'inactive'}">
+      <span class="rt-name">${esc(t.name)}</span>
+      <span class="req-meta">${[t.department, t.peril, t.policy_name].filter(Boolean).map(esc).join(' · ') || 'No matching hints'}</span>
+      <span class="req-mandatory-tag">${t.items.length} requirement${t.items.length === 1 ? '' : 's'}</span>
+      ${!t.is_active ? '<span class="req-badge not_applicable">Inactive</span>' : ''}
+      ${isAdminUser() ? `<button type="button" class="wh-correct-btn" onclick="openRequirementTemplateForm('${t.id}')">Edit</button>` : ''}
+    </div>`).join('');
+}
+
+function renderRtfItemsList() {
+  const el = document.getElementById('rtf-items-list');
+  const active = REQUIREMENT_MASTER.filter(r => r.is_active);
+  if (active.length === 0) { el.innerHTML = '<div class="task-empty">Add requirements to the Requirement Master first.</div>'; return; }
+  el.innerHTML = active.map(r => {
+    const sel = rtfSelectedItems[r.id];
+    return `<div class="rtf-item-row">
+      <input type="checkbox" ${sel ? 'checked' : ''} onchange="toggleRtfItem('${r.id}', this.checked)">
+      <span style="flex:1">${esc(r.name)} <span class="req-meta">(${esc(r.category)})</span></span>
+      ${sel ? `<label style="display:flex;align-items:center;gap:4px;font-size:11px"><input type="checkbox" ${sel.mandatory ? 'checked' : ''} onchange="setRtfItemMandatory('${r.id}', this.checked)"> Mandatory</label>` : ''}
+    </div>`;
+  }).join('');
+}
+function toggleRtfItem(reqId, checked) {
+  if (checked) rtfSelectedItems[reqId] = { mandatory: true };
+  else delete rtfSelectedItems[reqId];
+  renderRtfItemsList();
+}
+function setRtfItemMandatory(reqId, checked) {
+  if (rtfSelectedItems[reqId]) rtfSelectedItems[reqId].mandatory = checked;
+}
+
+function openRequirementTemplateForm(id) {
+  editingRequirementTemplateId = id || null;
+  document.getElementById('rtf-active-wrap').hidden = !id;
+  rtfSelectedItems = {};
+  if (id) {
+    const t = REQUIREMENT_TEMPLATES.find(x => x.id === id);
+    document.getElementById('rtf-modal-title').textContent = 'Edit Requirement Template';
+    document.getElementById('rtf-name').value = t.name;
+    document.getElementById('rtf-department').value = t.department || '';
+    document.getElementById('rtf-peril').value = t.peril || '';
+    document.getElementById('rtf-policy-name').value = t.policy_name || '';
+    document.getElementById('rtf-description').value = t.description || '';
+    document.getElementById('rtf-active').checked = !!t.is_active;
+    for (const it of t.items) rtfSelectedItems[it.requirement_id] = { mandatory: !!it.mandatory };
+  } else {
+    document.getElementById('rtf-modal-title').textContent = 'Add Requirement Template';
+    ['rtf-name', 'rtf-department', 'rtf-peril', 'rtf-policy-name', 'rtf-description'].forEach(id2 => document.getElementById(id2).value = '');
+  }
+  renderRtfItemsList();
+  document.getElementById('requirementTemplateModal').hidden = false;
+}
+function closeRequirementTemplateForm() { document.getElementById('requirementTemplateModal').hidden = true; }
+async function submitRequirementTemplateForm() {
+  const name = document.getElementById('rtf-name').value.trim();
+  if (!name) { alert('Template Name is required.'); return; }
+  const items = Object.entries(rtfSelectedItems).map(([requirement_id, v], i) => ({ requirement_id, mandatory: v.mandatory, sort_order: i }));
+  const body = {
+    name, department: document.getElementById('rtf-department').value, peril: document.getElementById('rtf-peril').value,
+    policy_name: document.getElementById('rtf-policy-name').value, description: document.getElementById('rtf-description').value, items,
+  };
+  try {
+    if (editingRequirementTemplateId) {
+      body.is_active = document.getElementById('rtf-active').checked;
+      await apiPut('/api/requirement-templates/' + encodeURIComponent(editingRequirementTemplateId), body);
+    } else {
+      await apiPost('/api/requirement-templates', body);
+    }
+    closeRequirementTemplateForm();
+    await loadRequirementTemplates();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// ── Job Detail: Requirements checklist ──
+async function loadJobRequirements(jobId) {
+  const card = document.getElementById('sp-requirements-card');
+  try {
+    currentJobRequirements = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/requirements');
+    if (openJobId !== jobId) return;
+    if (card) card.innerHTML = requirementsCardHtml(jobId);
+  } catch (e) {
+    if (card) card.innerHTML = '<div style="font-size:12px;color:var(--text-faint)">Requirements unavailable.</div>';
+  }
+}
+
+function reqSummary(reqs) {
+  const RESOLVED = new Set(['received', 'waived', 'not_applicable']);
+  const mandatory = reqs.filter(r => r.mandatory);
+  return {
+    mandatoryTotal: mandatory.length, mandatoryResolved: mandatory.filter(r => RESOLVED.has(r.status)).length,
+    pending: reqs.filter(r => r.status === 'pending').length, partial: reqs.filter(r => r.status === 'partial').length,
+  };
+}
+
+function requirementsCardHtml(jobId) {
+  const reqs = currentJobRequirements;
+  if (reqs.length === 0) {
+    return `<div style="font-size:12px;color:var(--text-faint);margin-bottom:8px">Requirements not set for this claim.</div>
+      <div class="req-toolbar">
+        <button type="button" class="btn-secondary" onclick="openApplyTemplateModal('${jobId}')">Apply Requirement Template</button>
+        <button type="button" class="btn-secondary" onclick="openJobRequirementForm('${jobId}')">+ Add Requirement</button>
+      </div>`;
+  }
+  const s = reqSummary(reqs);
+  const rows = reqs.map(r => reqRowHtml(jobId, r)).join('');
+  return `
+    <div class="req-summary-bar">
+      <span>Mandatory: <span class="req-stat-num">${s.mandatoryTotal}</span></span>
+      <span>Resolved: <span class="req-stat-num" style="color:var(--green)">${s.mandatoryResolved}</span></span>
+      <span>Pending: <span class="req-stat-num" style="color:var(--red)">${s.pending}</span></span>
+      <span>Partial: <span class="req-stat-num" style="color:var(--amber)">${s.partial}</span></span>
+    </div>
+    <div class="req-toolbar">
+      <button type="button" class="btn-secondary" onclick="openApplyTemplateModal('${jobId}')">Apply Template</button>
+      <button type="button" class="btn-secondary" onclick="openJobRequirementForm('${jobId}')">+ Add Requirement</button>
+      <button type="button" class="btn-secondary" onclick="copyPendingRequirements()">Copy Pending Requirements</button>
+    </div>
+    <div class="bi-preview-wrap" style="max-height:320px">${rows}</div>`;
+}
+
+function reqRowHtml(jobId, r) {
+  const badge = `<span class="req-badge ${r.status}">${esc(REQUIREMENT_STATUS_LABELS_CLIENT[r.status] || r.status)}</span>`;
+  const mandTag = `<span class="req-mandatory-tag">${r.mandatory ? 'Mandatory' : 'Optional'}</span>`;
+  const neverAsked = (r.status === 'pending' || r.status === 'partial') && !r.requested_date
+    ? '<span class="req-never">Not yet requested</span>' : '';
+  const dates = [r.requested_date ? `Req: ${r.requested_date}` : '', r.received_date ? `Recv: ${r.received_date}` : '', r.waived_date ? `Waived: ${r.waived_date}` : '']
+    .filter(Boolean).join(' · ');
+  return `<div class="req-row">
+    <span class="req-name">${esc(r.requirement_name)}</span>
+    ${mandTag}${badge}${neverAsked}
+    <span class="req-meta">${esc(dates)}</span>
+    <button type="button" class="wh-correct-btn" onclick="openReqStatusModal('${jobId}','${r.id}')">Update</button>
+  </div>`;
+}
+
+// ── Apply Template flow ──
+async function openApplyTemplateModal(jobId) {
+  document.getElementById('applyTemplateModal').dataset.jobId = jobId;
+  const suggestEl = document.getElementById('atm-suggested');
+  suggestEl.innerHTML = '<div style="font-size:12px;color:var(--text-faint)">Checking for a suggested template…</div>';
+  document.getElementById('applyTemplateModal').hidden = false;
+  if (REQUIREMENT_TEMPLATES.length === 0) await loadRequirementTemplates();
+
+  const sel = document.getElementById('atm-template-select');
+  const activeTemplates = REQUIREMENT_TEMPLATES.filter(t => t.is_active);
+  fillSelect(sel, activeTemplates.map(t => [t.id, t.name]), activeTemplates[0]?.id);
+
+  try {
+    const suggestions = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/requirements/suggest-templates');
+    if (suggestions.length > 0) {
+      suggestEl.innerHTML = `<div style="font-size:12px;color:var(--text-sec);margin-bottom:8px">Suggested: <strong>${esc(suggestions.map(s => s.name).join(', '))}</strong></div>`;
+      sel.value = suggestions[0].id;
+    } else {
+      suggestEl.innerHTML = '<div style="font-size:12px;color:var(--text-faint);margin-bottom:8px">No deterministic match found — pick a template manually.</div>';
+    }
+  } catch (e) { suggestEl.innerHTML = ''; }
+  renderApplyTemplatePreview();
+}
+function closeApplyTemplateModal() { document.getElementById('applyTemplateModal').hidden = true; }
+function renderApplyTemplatePreview() {
+  const id = document.getElementById('atm-template-select').value;
+  atmActiveTemplate = REQUIREMENT_TEMPLATES.find(t => t.id === id) || null;
+  atmDeselected = new Set();
+  const el = document.getElementById('atm-preview');
+  if (!atmActiveTemplate) { el.innerHTML = ''; return; }
+  const existingIds = new Set(currentJobRequirements.filter(r => r.requirement_id).map(r => r.requirement_id));
+  const mandatoryCount = atmActiveTemplate.items.filter(it => it.mandatory).length;
+  el.innerHTML = `<div style="font-size:12px;color:var(--text-sec);margin:8px 0">${atmActiveTemplate.items.length} requirements — Mandatory: ${mandatoryCount}, Optional: ${atmActiveTemplate.items.length - mandatoryCount}</div>
+    <div class="bi-preview-wrap" style="max-height:240px">${atmActiveTemplate.items.map(it => {
+      const already = existingIds.has(it.requirement_id);
+      return `<div class="rtf-item-row">
+        <input type="checkbox" ${already ? 'disabled' : 'checked'} onchange="toggleAtmDeselect('${it.requirement_id}', this.checked)">
+        <span style="flex:1">${esc(it.requirement_name)} ${it.mandatory ? '' : '<span class="req-meta">(optional)</span>'}</span>
+        ${already ? '<span class="req-meta">already on checklist</span>' : ''}
+      </div>`;
+    }).join('')}</div>`;
+}
+function toggleAtmDeselect(reqId, checked) { if (checked) atmDeselected.delete(reqId); else atmDeselected.add(reqId); }
+async function submitApplyTemplate() {
+  const jobId = document.getElementById('applyTemplateModal').dataset.jobId;
+  if (!atmActiveTemplate) return;
+  const requirement_ids = atmActiveTemplate.items.map(it => it.requirement_id).filter(id => !atmDeselected.has(id));
+  if (requirement_ids.length === 0) { alert('Select at least one requirement to apply.'); return; }
+  try {
+    await apiPost('/api/jobs/' + encodeURIComponent(jobId) + '/requirements/apply-template', { template_id: atmActiveTemplate.id, requirement_ids });
+    closeApplyTemplateModal();
+    await loadJobRequirements(jobId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// ── Add custom / master requirement to a job ──
+function openJobRequirementForm(jobId) {
+  document.getElementById('jobRequirementModal').dataset.jobId = jobId;
+  const masterSel = document.getElementById('jrf-master-select');
+  const existingIds = new Set(currentJobRequirements.filter(r => r.requirement_id).map(r => r.requirement_id));
+  const available = REQUIREMENT_MASTER.filter(r => r.is_active && !existingIds.has(r.id));
+  masterSel.innerHTML = '<option value="">— Custom requirement —</option>' + available.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  fillSelect(document.getElementById('jrf-type'), REQUIREMENT_TYPES_CLIENT.map(t => [t, REQUIREMENT_TYPE_LABELS_CLIENT[t]]), 'document');
+  document.getElementById('jrf-name').value = '';
+  document.getElementById('jrf-mandatory').checked = true;
+  document.getElementById('jobRequirementModal').hidden = false;
+}
+function closeJobRequirementForm() { document.getElementById('jobRequirementModal').hidden = true; }
+function onJrfMasterChange() {
+  const id = document.getElementById('jrf-master-select').value;
+  const nameEl = document.getElementById('jrf-name');
+  if (id) {
+    const r = REQUIREMENT_MASTER.find(x => x.id === id);
+    nameEl.value = r.name; nameEl.disabled = true;
+    document.getElementById('jrf-mandatory').checked = !!r.default_mandatory;
+  } else {
+    nameEl.disabled = false; nameEl.value = '';
+  }
+}
+async function submitJobRequirementForm() {
+  const jobId = document.getElementById('jobRequirementModal').dataset.jobId;
+  const masterId = document.getElementById('jrf-master-select').value;
+  const body = { mandatory: document.getElementById('jrf-mandatory').checked };
+  if (masterId) { body.requirement_id = masterId; }
+  else {
+    const name = document.getElementById('jrf-name').value.trim();
+    if (!name) { alert('Requirement Name is required.'); return; }
+    body.requirement_name = name; body.requirement_type = document.getElementById('jrf-type').value;
+  }
+  try {
+    await apiPost('/api/jobs/' + encodeURIComponent(jobId) + '/requirements', body);
+    closeJobRequirementForm();
+    await loadJobRequirements(jobId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// ── Requirement status update / waiver / follow-up ──
+function openReqStatusModal(jobId, reqId) {
+  rsmEditingReqId = reqId;
+  document.getElementById('reqStatusModal').dataset.jobId = jobId;
+  const r = currentJobRequirements.find(x => x.id === reqId);
+  if (!r) return;
+  document.getElementById('rsm-title').textContent = r.requirement_name;
+  const fields = document.getElementById('rsm-fields');
+  fields.innerHTML = `
+    <div class="form-field full">
+      <label>Status</label>
+      <select id="rsm-status">
+        ${Object.entries(REQUIREMENT_STATUS_LABELS_CLIENT).map(([v, l]) => `<option value="${v}" ${v === r.status ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-field full" id="rsm-received-date-wrap" ${r.status === 'received' ? '' : 'hidden'}>
+      <label>Receipt Date (leave blank for today)</label>
+      <input type="date" id="rsm-received-date" value="${esc(r.received_date || '')}">
+    </div>
+    <div class="form-field full" id="rsm-waiver-wrap" hidden>
+      <label>Waiver Reason *</label>
+      <textarea class="notes-area" id="rsm-waiver-reason" rows="2"></textarea>
+    </div>
+    <div class="form-field full">
+      <label>Remarks</label>
+      <textarea class="notes-area" id="rsm-remarks" rows="2">${esc(r.remarks || '')}</textarea>
+    </div>
+    <div class="sp-section-label" style="margin-top:6px">Log a Follow-up</div>
+    <div class="form-field">
+      <label>Date</label>
+      <input type="date" id="rsm-followup-date" value="${todayIST()}">
+    </div>
+    <div class="form-field">
+      <label>Mode</label>
+      <select id="rsm-followup-mode"><option value="">—</option>${['Email', 'Call', 'WhatsApp', 'Letter', 'Other'].map(m => `<option value="${m}">${m}</option>`).join('')}</select>
+    </div>
+    <div class="form-field full">
+      <button type="button" class="btn-secondary" onclick="submitReqFollowupOnly()">Log Follow-up Only (no status change)</button>
+    </div>`;
+  document.getElementById('rsm-status').onchange = function () {
+    document.getElementById('rsm-received-date-wrap').hidden = this.value !== 'received';
+    document.getElementById('rsm-waiver-wrap').hidden = this.value !== 'waived';
+  };
+  loadReqHistory(reqId);
+  document.getElementById('reqStatusModal').hidden = false;
+}
+function closeReqStatusModal() { document.getElementById('reqStatusModal').hidden = true; }
+
+async function loadReqHistory(reqId) {
+  const el = document.getElementById('rsm-history');
+  el.textContent = 'Loading…';
+  try {
+    const fups = await apiGet('/api/jobs/' + encodeURIComponent(document.getElementById('reqStatusModal').dataset.jobId) + '/requirements/' + encodeURIComponent(reqId) + '/followups');
+    el.innerHTML = fups.length === 0 ? 'No follow-up history yet.' : fups.map(f =>
+      `<div>${esc(f.followup_date)} — ${esc(f.source === 'lor' ? 'LOR' : f.source === 'reminder' ? 'Reminder' : 'Follow-up')}${f.mode ? ' via ' + esc(f.mode) : ''}${f.remarks ? ' — ' + esc(f.remarks) : ''}</div>`
+    ).join('');
+  } catch (e) { el.textContent = 'History unavailable.'; }
+}
+
+async function submitReqStatusModal() {
+  const jobId = document.getElementById('reqStatusModal').dataset.jobId;
+  const status = document.getElementById('rsm-status').value;
+  const body = { status, remarks: document.getElementById('rsm-remarks').value };
+  if (status === 'received') {
+    const d = document.getElementById('rsm-received-date').value;
+    if (d) body.received_date = d;
+  }
+  if (status === 'waived') {
+    const reason = document.getElementById('rsm-waiver-reason').value.trim();
+    if (!reason) { alert('Waiver Reason is required.'); return; }
+    body.waiver_reason = reason;
+  }
+  try {
+    await apiPut('/api/jobs/' + encodeURIComponent(jobId) + '/requirements/' + encodeURIComponent(rsmEditingReqId), body);
+    closeReqStatusModal();
+    await loadJobRequirements(jobId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function submitReqFollowupOnly() {
+  const jobId = document.getElementById('reqStatusModal').dataset.jobId;
+  const followup_date = document.getElementById('rsm-followup-date').value || todayIST();
+  const mode = document.getElementById('rsm-followup-mode').value;
+  try {
+    await apiPost('/api/jobs/' + encodeURIComponent(jobId) + '/requirements/' + encodeURIComponent(rsmEditingReqId) + '/followups', { followup_date, mode, source: 'manual_followup' });
+    await loadReqHistory(rsmEditingReqId);
+    await loadJobRequirements(jobId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+// ── Copy Pending Requirements (LOR wording) — plain text, no AI ──
+function copyPendingRequirements() {
+  const pending = currentJobRequirements.filter(r => r.mandatory && (r.status === 'pending' || r.status === 'partial'));
+  if (pending.length === 0) { alert('No pending mandatory requirements to copy.'); return; }
+  const lines = pending.map((r, i) => {
+    const master = REQUIREMENT_MASTER.find(m => m.id === r.requirement_id);
+    const text = master && master.request_text ? master.request_text : `Kindly provide the ${r.requirement_name}.`;
+    return `${i + 1}. ${text}`;
+  });
+  const text = lines.join('\n');
+  navigator.clipboard.writeText(text).then(
+    () => alert('Copied ' + pending.length + ' pending requirement(s) to clipboard.'),
+    () => prompt('Copy the text below:', text)
+  );
 }
 
 function buildJobPanel(j) {
@@ -3115,6 +3794,12 @@ function buildJobPanel(j) {
   <div class="sp-section">
     <div class="sp-section-label">Document Checklist</div>
     <div class="doc-grid">${docItems}</div>
+  </div>
+
+  <!-- Requirements (V1.7) -->
+  <div class="sp-section">
+    <div class="sp-section-label">Requirements <span style="color:var(--text-faint);font-weight:400">(document / information intelligence)</span></div>
+    <div id="sp-requirements-card"><div style="font-size:12px;color:var(--text-faint)">Loading requirements…</div></div>
   </div>
 
   <!-- Notes -->
@@ -4179,6 +4864,17 @@ function renderControlCentre() {
     ccCardHtml(cc.billing.bill_pending.length + cc.billing.payment_pending.length + cc.billing.partially_settled.length, 'Billing / Payment Pending', 'amber', ccSelectHandlerFor('Billing / Payment Pending', [...cc.billing.bill_pending, ...cc.billing.payment_pending, ...cc.billing.partially_settled])),
   ];
   document.getElementById('ccApprovalCards').innerHTML = approvalCards.join('');
+
+  // Document Control (V1.7)
+  const dc = cc.document_control;
+  const docControlCards = [
+    ccCardHtml(dc.awaiting_documents.length, 'Awaiting Documents', 'amber', ccSelectHandlerFor('Awaiting Documents', dc.awaiting_documents)),
+    ccCardHtml(dc.reminder_due.length, 'Reminder Due', 'amber', ccSelectHandlerFor('Document Reminder Due', dc.reminder_due)),
+    ccCardHtml(dc.reminder_overdue.length, 'Reminder Overdue', 'red', ccSelectHandlerFor('Document Reminder Overdue', dc.reminder_overdue)),
+    ccCardHtml(dc.ready_for_verification.length, 'Ready for Verification', 'green', ccSelectHandlerFor('Documents Ready for Verification', dc.ready_for_verification)),
+    ccCardHtml(dc.no_checklist.length, 'No Requirement Checklist', 'blue', ccSelectHandlerFor('Claims With No Requirement Checklist', dc.no_checklist)),
+  ];
+  document.getElementById('ccDocControlCards').innerHTML = docControlCards.join('');
 
   // Live Team
   const liveHtml = cc.team.live.length === 0

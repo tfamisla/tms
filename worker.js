@@ -841,6 +841,22 @@ async function createReminder(db, jobId, body, user) {
     ts: now, actor: user.id,
   }]);
 
+  // V1.7: claim_reminders remains authoritative for claim-level reminders
+  // (this row is created exactly as before) — optionally, the caller may
+  // also select which pending requirements this reminder followed up on,
+  // which logs a requirement_followups row for each, source='reminder',
+  // linked back to this reminder. Never required; existing callers that
+  // don't pass requirement_ids see no behavior change at all.
+  if (Array.isArray(body.requirement_ids) && body.requirement_ids.length > 0) {
+    for (const reqId of body.requirement_ids) {
+      try {
+        await createRequirementFollowup(db, jobId, reqId, {
+          followup_date: reminderDate, mode, source: 'reminder', claim_reminder_id: id, remarks,
+        }, user);
+      } catch { /* a stale/foreign requirement id must never fail the reminder itself */ }
+    }
+  }
+
   return { id, job_id: jobId, reminder_date: reminderDate, reminder_type: reminderType, mode, remarks,
     created_by: user.id, created_at: now, updated_at: now };
 }
@@ -914,6 +930,14 @@ async function createDocumentReceipt(db, jobId, body, user) {
     text: `${user.id} added document receipt — ${docs.length} document(s) received${receiptMode ? ' by ' + receiptMode : ''} — ${receiptDate}.`,
     ts: now, actor: user.id,
   }]);
+
+  // V1.7: optionally link this receipt batch to specific checklist
+  // requirements it satisfies (never required — document_receipt_events
+  // remains fully valid and usable with zero requirement links, exactly as
+  // before this version).
+  if (Array.isArray(body.requirement_links) && body.requirement_links.length > 0) {
+    await linkReceiptToRequirements(db, jobId, id, body.requirement_links, user);
+  }
 
   return { id, job_id: jobId, receipt_date: receiptDate, receipt_mode: receiptMode, documents_received: docs, remarks,
     created_by: user.id, created_at: now, updated_at: now };
@@ -2139,13 +2163,28 @@ function deriveWorkflowSteps(job) {
   return { completedSteps, skippedSteps, pendingSteps, currentStep, decisionNeeded };
 }
 
-function buildStepReason(job, step) {
+// Names up to 3 unresolved mandatory requirements, "+N more" beyond that —
+// mirrors the spec's "Fire Brigade Report, Stock Statement, Purchase
+// Invoice +1 more" example. Falls back to the old generic wording when no
+// checklist exists yet (V1.7 is additive — a claim with no requirements
+// established still reads exactly as it did before this version).
+function documentsStepReason(job, ctx) {
+  if (!ctx || !ctx.requirements || ctx.requirements.length === 0) return 'Awaiting documents from insured.';
+  const RESOLVED = new Set(['received', 'waived', 'not_applicable']);
+  const unresolved = ctx.requirements.filter(r => r.mandatory && !RESOLVED.has(r.status));
+  if (unresolved.length === 0) return 'All mandatory requirements resolved; ready for document verification.';
+  const names = unresolved.slice(0, 3).map(r => r.requirement_name);
+  const more = unresolved.length > 3 ? ` +${unresolved.length - 3} more` : '';
+  return `Awaiting ${unresolved.length} mandatory requirement${unresolved.length === 1 ? '' : 's'} — ${names.join(', ')}${more}.`;
+}
+
+function buildStepReason(job, step, ctx) {
   switch (step.id) {
     case 'appointment': return 'New claim — appointment not yet confirmed.';
     case 'inspection': return job.appointment_confirmed ? 'Appointment confirmed; physical inspection pending.' : 'Survey scheduling in progress.';
     case 'ila': return job.survey_status === 'completed' ? 'Survey completed; ILA not yet issued.' : 'ILA required for this claim.';
     case 'lor': return 'LOR not yet issued.';
-    case 'documents': return 'Awaiting documents from insured.';
+    case 'documents': return documentsStepReason(job, ctx);
     case 'assessment': return 'Documents in hand; assessment not yet prepared.';
     case 'director_verification': return 'Assessment prepared; Director verification pending.';
     case 'insurer_approval': return 'Assessment approved by Director; insurer approval is required for this claim.';
@@ -2235,15 +2274,35 @@ function findWorkflowAlerts(job, ctx, walk, currentStepId) {
     alerts.push({ code: 'decide_required', step: walk.decisionNeeded.id, label: `Decide whether ${walk.decisionNeeded.label.toLowerCase()} is required` });
   }
 
+  // V1.7: once a requirement checklist exists, its own precise per-
+  // requirement follow-up basis supersedes the old blunt "any claim
+  // reminder logged at all" check — strictly more accurate, same
+  // reminder_frequency source. Claims with no checklist yet keep the
+  // original generic behavior unchanged (V1.7 is additive).
   if (currentStepId === 'documents') {
-    const freqDays = reminderDueIntervalDays(job);
-    if (freqDays != null) {
-      const lastReminderTs = ctx.reminders.length ? Math.max(...ctx.reminders.map(r => r.created_at)) : job.created_at;
-      const sinceReminder = daysSinceTs(lastReminderTs, ctx.nowMs);
-      if (sinceReminder != null && sinceReminder >= freqDays) {
-        alerts.push({ code: 'reminder_due', days: sinceReminder });
+    if (ctx.requirements && ctx.requirements.length > 0) {
+      if (ctx.documentReadiness.reminder_due) {
+        alerts.push({ code: 'requirement_reminder_due', next_followup_date: ctx.documentReadiness.next_followup_date });
+      }
+    } else {
+      const freqDays = reminderDueIntervalDays(job);
+      if (freqDays != null) {
+        const lastReminderTs = ctx.reminders.length ? Math.max(...ctx.reminders.map(r => r.created_at)) : job.created_at;
+        const sinceReminder = daysSinceTs(lastReminderTs, ctx.nowMs);
+        if (sinceReminder != null && sinceReminder >= freqDays) {
+          alerts.push({ code: 'reminder_due', days: sinceReminder });
+        }
       }
     }
+  }
+
+  // Missing checklist only becomes an attention item once the claim has
+  // actually reached the point where documents matter (documents step or
+  // later) — never immediately after job creation (spec item 65).
+  const PAST_LOR_STEPS = new Set(['documents', 'assessment', 'director_verification', 'insurer_approval',
+    'insured_consent', 'fsr_preparation', 'fsr_final_verification', 'fsr_submission', 'dispatch', 'pod']);
+  if ((!ctx.requirements || ctx.requirements.length === 0) && PAST_LOR_STEPS.has(currentStepId)) {
+    alerts.push({ code: 'no_requirement_checklist' });
   }
 
   const overdueTasks = ctx.tasks.filter(t => t.is_overdue);
@@ -2304,7 +2363,7 @@ function analyzeJobWorkflow(job, ctx) {
     currentStepId = walk.currentStep.id;
     currentStepLabel = walk.currentStep.label;
     nextAction = { code: walk.currentStep.id, label: walk.currentStep.nextAction, task_type: walk.currentStep.taskType };
-    reason = buildStepReason(job, walk.currentStep);
+    reason = buildStepReason(job, walk.currentStep, ctx);
 
     if (currentStepId === 'director_verification' && job.director_verification_status === 'returned_for_revision') {
       nextAction = { code: 'rework_assessment', label: 'Rework assessment', task_type: 'assessment_preparation' };
@@ -2312,6 +2371,18 @@ function analyzeJobWorkflow(job, ctx) {
     } else if (currentStepId === 'fsr_final_verification' && job.fsr_final_verification_status === 'returned_for_revision') {
       nextAction = { code: 'rework_fsr', label: 'Rework FSR', task_type: 'fsr_preparation' };
       reason = job.fsr_final_verification_remarks ? `Returned by Director: ${job.fsr_final_verification_remarks}` : 'FSR returned for revision by Director.';
+    } else if (currentStepId === 'documents' && ctx.requirements && ctx.requirements.length > 0) {
+      // V1.7: once a requirement checklist exists, the generic "follow up
+      // documents" next action becomes requirement-aware — never changes
+      // what makes the 'documents' step itself complete (still
+      // assessment_status leaving not_started, per V1.5), only the label/
+      // reason/task-type shown while it's still the current step.
+      const dr = ctx.documentReadiness;
+      if (dr.status === 'ready_for_verification') {
+        nextAction = { code: 'verify_documents', label: 'Verify documents', task_type: 'verify_documents' };
+      } else if (dr.reminder_due) {
+        nextAction = { code: 'follow_up_requirements', label: 'Follow up pending requirements', task_type: 'call_pending_documents' };
+      }
     }
   } else {
     phase = 'billing_closure';
@@ -2372,6 +2443,8 @@ async function buildWorkflowContexts(db, jobIds) {
   const { results: taskAssigneeRows } = await db.prepare('SELECT task_id, staff_id FROM task_assignees').all();
   const { results: taskActivityRows } = await db.prepare('SELECT task_id, ts FROM task_activity').all();
   const { results: workSessionRows } = await db.prepare('SELECT task_id, started_at, ended_at FROM task_work_sessions').all();
+  const { results: jobRequirementRows } = await db.prepare('SELECT * FROM job_requirements').all();
+  const { results: followupRows } = await db.prepare('SELECT * FROM requirement_followups').all();
 
   const billingByJob = {}; for (const b of billingRows) billingByJob[b.job_id] = b;
   const feeSumsByJob = {};
@@ -2397,6 +2470,8 @@ async function buildWorkflowContexts(db, jobIds) {
   const tasksByJob = groupBy(tasksWithMeta, 'job_id');
   const activityByTask = groupBy(taskActivityRows, 'task_id');
   const sessionsByTask = groupBy(workSessionRows, 'task_id');
+  const requirementsByJob = groupBy(jobRequirementRows.map(r => ({ ...r, mandatory: !!r.mandatory })), 'job_id');
+  const followupsByRequirement = groupBy(followupRows, 'job_requirement_id');
 
   const nowMs = Date.now();
   const contexts = {};
@@ -2407,6 +2482,9 @@ async function buildWorkflowContexts(db, jobIds) {
     const taskActivity = jobTasks.flatMap(t => activityByTask[t.id] || []);
     const workSessions = jobTasks.flatMap(t => sessionsByTask[t.id] || []);
     const sums = feeSumsByJob[row.id] || { receivedPaise: 0, tdsPaise: 0, writeoffPaise: 0 };
+    const requirements = requirementsByJob[row.id] || [];
+    const followupsByReq = {};
+    for (const r of requirements) followupsByReq[r.id] = followupsByRequirement[r.id] || [];
     contexts[row.id] = {
       nowMs,
       billing: computeBilling(job, sums),
@@ -2416,6 +2494,8 @@ async function buildWorkflowContexts(db, jobIds) {
       queries: queriesByJob[row.id] || [],
       tasks: jobTasks,
       taskActivity, workSessions,
+      requirements, followupsByReq,
+      documentReadiness: computeDocumentReadiness(requirements, followupsByReq, job, nowMs),
       job,
     };
   }
@@ -2455,7 +2535,7 @@ async function listWorkflowAttention(db) {
       job_id: jobId, title: ctx.job.title, insured: ctx.job.insured,
       director_ids: ctx.job.director_ids, surveyor_ids: ctx.job.surveyor_ids,
       branch_ids: ctx.job.branch_ids, backstaff_ids: ctx.job.backstaff_ids,
-      analysis,
+      analysis, document_readiness: ctx.documentReadiness,
     });
   }
   rows.sort((a, b) => {
@@ -2860,6 +2940,7 @@ async function buildDirectorControlCentre(db, user) {
   const oldestOpenClaims = buildOldestOpenClaims(openRows, nowMs);
   const dataIssues = buildDataIssues(openRows);
   const documentFollowup = buildDocumentFollowup(openRows);
+  const documentControl = buildDocumentControl(openRows);
   const survey = buildSurveyControl(openRows);
   const finalReport = buildFinalReportControl(openRows);
   const queries = await buildQueryControl(db, openRows);
@@ -2887,6 +2968,7 @@ async function buildDirectorControlCentre(db, user) {
     oldest_open_claims: oldestOpenClaims,
     data_issues: dataIssues,
     document_followup: documentFollowup,
+    document_control: documentControl,
     survey,
     final_report: finalReport,
     queries,
@@ -2900,6 +2982,499 @@ async function buildDirectorControlCentre(db, user) {
       director_approval_pending: myResponsible.filter(r => r.analysis.current_step === 'director_verification' && r.analysis.next_action?.code !== 'rework_assessment').length,
       ready_for_closure: myResponsible.filter(r => r.analysis.current_step === 'ready_for_closure').length,
     },
+  };
+}
+
+// ── REQUIREMENTS & DOCUMENT INTELLIGENCE (V1.7) ─────────────────────
+// Tracks WHAT is required per claim and whether it has been satisfied —
+// never file storage (see migrations/016_requirements_intelligence.sql).
+// Fully normalized: zero new `jobs` columns, jobs stays frozen at 97.
+const REQUIREMENT_TYPES = ['document', 'information', 'clarification', 'certificate', 'statement', 'report', 'invoice', 'quotation', 'consent', 'explanation', 'other'];
+const REQUIREMENT_TYPE_LABELS = {
+  document: 'Document', information: 'Information', clarification: 'Clarification', certificate: 'Certificate',
+  statement: 'Statement', report: 'Report', invoice: 'Invoice', quotation: 'Quotation', consent: 'Consent',
+  explanation: 'Explanation', other: 'Other',
+};
+const REQUIREMENT_CATEGORIES = ['Claim', 'Policy', 'Ownership', 'Loss', 'Repair', 'Purchase', 'Financial', 'Fire', 'Theft', 'Machinery', 'Stock', 'Marine', 'Motor', 'BI / LOP', 'Legal', 'Other'];
+const REQUIREMENT_STATUSES = ['pending', 'partial', 'received', 'not_applicable', 'waived'];
+const REQUIREMENT_STATUS_LABELS = { pending: 'Pending', partial: 'Partial', received: 'Received', not_applicable: 'Not Applicable', waived: 'Waived' };
+const REQUIREMENT_RESOLVED_STATUSES = new Set(['received', 'waived', 'not_applicable']);
+const FOLLOWUP_MODES = ['Email', 'Call', 'WhatsApp', 'Letter', 'Other'];
+const FOLLOWUP_SOURCES = ['lor', 'reminder', 'manual_followup'];
+
+function canManageRequirementMaster(user) { return isAdmin(user); }
+function canWaiveMandatoryRequirement(user) { return isAdmin(user) || isDirectorRole(user); }
+
+// Pure, deterministic — no AI, no stored summary (spec explicitly forbids
+// caching this). `requirements` already carries `mandatory` as a boolean
+// (buildWorkflowContexts normalizes it); `followupsByReq` maps
+// job_requirement_id -> that requirement's own requirement_followups rows.
+function computeDocumentReadiness(requirements, followupsByReq, job, nowMs) {
+  if (!requirements || requirements.length === 0) {
+    return {
+      status: 'not_started', mandatory_total: 0, mandatory_resolved: 0, pending: 0, partial: 0,
+      optional_pending: 0, reminder_due: false, next_followup_date: null, never_requested_count: 0,
+    };
+  }
+  const mandatoryReqs = requirements.filter(r => r.mandatory);
+  const mandatoryResolved = mandatoryReqs.filter(r => REQUIREMENT_RESOLVED_STATUSES.has(r.status));
+  const mandatoryUnresolved = mandatoryReqs.filter(r => !REQUIREMENT_RESOLVED_STATUSES.has(r.status));
+  const pendingCount = requirements.filter(r => r.status === 'pending').length;
+  const partialCount = requirements.filter(r => r.status === 'partial').length;
+  const optionalPending = requirements.filter(r => !r.mandatory && (r.status === 'pending' || r.status === 'partial')).length;
+
+  const freqDays = reminderDueIntervalDays(job);
+  let reminderDue = false, nextFollowupMs = null, neverRequestedCount = 0;
+  for (const r of mandatoryUnresolved) {
+    const fups = followupsByReq[r.id] || [];
+    const lastFollowup = fups.length ? fups.reduce((a, b) => (a.followup_date > b.followup_date ? a : b)) : null;
+    if (!r.requested_date && !lastFollowup) neverRequestedCount++;
+    if (freqDays != null) {
+      const basisDateStr = lastFollowup ? lastFollowup.followup_date : (r.requested_date || null);
+      if (basisDateStr) {
+        const basisMs = Date.parse(basisDateStr + 'T00:00:00Z');
+        const dueMs = basisMs + freqDays * 86400000;
+        if (dueMs <= nowMs) reminderDue = true;
+        if (nextFollowupMs == null || dueMs < nextFollowupMs) nextFollowupMs = dueMs;
+      }
+    }
+  }
+
+  let status;
+  if (mandatoryReqs.length === 0) {
+    status = requirements.every(r => REQUIREMENT_RESOLVED_STATUSES.has(r.status)) ? 'ready_for_verification' : 'awaiting_documents';
+  } else if (mandatoryResolved.length === 0) {
+    status = 'awaiting_documents';
+  } else if (mandatoryResolved.length === mandatoryReqs.length) {
+    status = 'ready_for_verification';
+  } else {
+    status = 'partially_received';
+  }
+
+  return {
+    status, mandatory_total: mandatoryReqs.length, mandatory_resolved: mandatoryResolved.length,
+    pending: pendingCount, partial: partialCount, optional_pending: optionalPending,
+    reminder_due: reminderDue, next_followup_date: nextFollowupMs != null ? istDateOfTimestamp(nextFollowupMs) : null,
+    never_requested_count: neverRequestedCount,
+  };
+}
+
+// ── Requirement Master (Admin-managed) ──────────────────────────────
+async function listRequirementMaster(db) {
+  const { results } = await db.prepare('SELECT * FROM requirement_master ORDER BY category ASC, name ASC').all();
+  return results.map(r => ({ ...r, default_mandatory: !!r.default_mandatory, is_active: !!r.is_active }));
+}
+
+async function createRequirementMaster(db, body, user) {
+  if (!canManageRequirementMaster(user)) throw new Error('Only an Admin may manage the Requirement Master');
+  const name = (body.name || '').trim();
+  if (!name) throw new Error('Requirement Name is required');
+  const requirementType = REQUIREMENT_TYPES.includes(body.requirement_type) ? body.requirement_type : 'document';
+  const category = (body.category || 'Other').trim() || 'Other';
+  const now = Date.now();
+  const id = `REQM-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO requirement_master (id, name, category, requirement_type, description, request_text, default_mandatory, is_active, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, name, category, requirementType, (body.description || '').trim(), (body.request_text || '').trim(),
+    body.default_mandatory === false ? 0 : 1, 1, user.id, now, now).run();
+  return db.prepare('SELECT * FROM requirement_master WHERE id = ?').bind(id).first();
+}
+
+async function updateRequirementMaster(db, id, body, user) {
+  if (!canManageRequirementMaster(user)) throw new Error('Only an Admin may manage the Requirement Master');
+  const existing = await db.prepare('SELECT * FROM requirement_master WHERE id = ?').bind(id).first();
+  if (!existing) throw new Error('requirement not found');
+  const name = body.name !== undefined ? String(body.name).trim() : existing.name;
+  if (!name) throw new Error('Requirement Name is required');
+  const category = body.category !== undefined ? (String(body.category).trim() || 'Other') : existing.category;
+  const requirementType = body.requirement_type !== undefined
+    ? (REQUIREMENT_TYPES.includes(body.requirement_type) ? body.requirement_type : existing.requirement_type)
+    : existing.requirement_type;
+  const description = body.description !== undefined ? String(body.description).trim() : existing.description;
+  const requestText = body.request_text !== undefined ? String(body.request_text).trim() : existing.request_text;
+  const defaultMandatory = body.default_mandatory !== undefined ? (body.default_mandatory ? 1 : 0) : existing.default_mandatory;
+  const isActive = body.is_active !== undefined ? (body.is_active ? 1 : 0) : existing.is_active;
+  const now = Date.now();
+  await db.prepare(`
+    UPDATE requirement_master SET name=?, category=?, requirement_type=?, description=?, request_text=?, default_mandatory=?, is_active=?, updated_at=?
+    WHERE id = ?
+  `).bind(name, category, requirementType, description, requestText, defaultMandatory, isActive, now, id).run();
+  // Note: intentionally never touches job_requirements.requirement_name —
+  // existing claims keep their snapshot wording (spec item 12/B).
+  return db.prepare('SELECT * FROM requirement_master WHERE id = ?').bind(id).first();
+}
+
+// ── Requirement Templates (Admin-managed) ───────────────────────────
+async function getRequirementTemplate(db, id) {
+  const t = await db.prepare('SELECT * FROM requirement_templates WHERE id = ?').bind(id).first();
+  if (!t) return null;
+  const { results: items } = await db.prepare(`
+    SELECT rti.id, rti.template_id, rti.requirement_id, rti.mandatory, rti.sort_order, rti.notes,
+           rm.name AS requirement_name, rm.category AS requirement_category, rm.requirement_type AS requirement_type
+    FROM requirement_template_items rti JOIN requirement_master rm ON rm.id = rti.requirement_id
+    WHERE rti.template_id = ? ORDER BY rti.sort_order ASC
+  `).bind(id).all();
+  return { ...t, is_active: !!t.is_active, items: items.map(it => ({ ...it, mandatory: !!it.mandatory })) };
+}
+
+async function listRequirementTemplates(db) {
+  const { results: templates } = await db.prepare('SELECT * FROM requirement_templates ORDER BY name ASC').all();
+  const { results: items } = await db.prepare(`
+    SELECT rti.id, rti.template_id, rti.requirement_id, rti.mandatory, rti.sort_order, rti.notes,
+           rm.name AS requirement_name, rm.category AS requirement_category, rm.requirement_type AS requirement_type
+    FROM requirement_template_items rti JOIN requirement_master rm ON rm.id = rti.requirement_id
+    ORDER BY rti.sort_order ASC
+  `).all();
+  const itemsByTemplate = {};
+  for (const it of items) (itemsByTemplate[it.template_id] ||= []).push({ ...it, mandatory: !!it.mandatory });
+  return templates.map(t => ({ ...t, is_active: !!t.is_active, items: itemsByTemplate[t.id] || [] }));
+}
+
+// Validates every item BEFORE writing anything (spec item 73 — avoid a
+// half-applied template definition if one item is invalid), then replaces
+// the item set atomically-in-spirit: delete-all-then-reinsert, which is
+// safe here because it only ever runs after every item has already been
+// confirmed to reference a real, existing master requirement.
+async function setTemplateItems(db, templateId, items) {
+  const seen = new Set();
+  const rows = [];
+  for (const it of items) {
+    const reqId = it.requirement_id;
+    if (!reqId) throw new Error('Each template item needs a requirement_id');
+    if (seen.has(reqId)) throw new Error('Duplicate requirement in template items');
+    seen.add(reqId);
+    const master = await db.prepare('SELECT id FROM requirement_master WHERE id = ?').bind(reqId).first();
+    if (!master) throw new Error(`Requirement ${reqId} not found`);
+    rows.push({ reqId, mandatory: it.mandatory === false ? 0 : 1, sortOrder: Number.isFinite(Number(it.sort_order)) ? Number(it.sort_order) : 0, notes: (it.notes || '').trim() });
+  }
+  await db.prepare('DELETE FROM requirement_template_items WHERE template_id = ?').bind(templateId).run();
+  let i = 0;
+  for (const r of rows) {
+    const id = `RTI-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}-${i++}`;
+    await db.prepare('INSERT INTO requirement_template_items (id, template_id, requirement_id, mandatory, sort_order, notes) VALUES (?,?,?,?,?,?)')
+      .bind(id, templateId, r.reqId, r.mandatory, r.sortOrder, r.notes).run();
+  }
+}
+
+async function createRequirementTemplate(db, body, user) {
+  if (!canManageRequirementMaster(user)) throw new Error('Only an Admin may manage Requirement Templates');
+  const name = (body.name || '').trim();
+  if (!name) throw new Error('Template Name is required');
+  const now = Date.now();
+  const id = `RTPL-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO requirement_templates (id, name, department, peril, policy_name, description, is_active, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, name, (body.department || '').trim(), (body.peril || '').trim(), (body.policy_name || '').trim(),
+    (body.description || '').trim(), 1, user.id, now, now).run();
+  if (Array.isArray(body.items) && body.items.length > 0) await setTemplateItems(db, id, body.items);
+  return getRequirementTemplate(db, id);
+}
+
+async function updateRequirementTemplate(db, id, body, user) {
+  if (!canManageRequirementMaster(user)) throw new Error('Only an Admin may manage Requirement Templates');
+  const existing = await db.prepare('SELECT * FROM requirement_templates WHERE id = ?').bind(id).first();
+  if (!existing) throw new Error('template not found');
+  const name = body.name !== undefined ? String(body.name).trim() : existing.name;
+  if (!name) throw new Error('Template Name is required');
+  const department = body.department !== undefined ? String(body.department).trim() : existing.department;
+  const peril = body.peril !== undefined ? String(body.peril).trim() : existing.peril;
+  const policyName = body.policy_name !== undefined ? String(body.policy_name).trim() : existing.policy_name;
+  const description = body.description !== undefined ? String(body.description).trim() : existing.description;
+  const isActive = body.is_active !== undefined ? (body.is_active ? 1 : 0) : existing.is_active;
+  const now = Date.now();
+  await db.prepare('UPDATE requirement_templates SET name=?, department=?, peril=?, policy_name=?, description=?, is_active=?, updated_at=? WHERE id = ?')
+    .bind(name, department, peril, policyName, description, isActive, now, id).run();
+  if (Array.isArray(body.items)) await setTemplateItems(db, id, body.items);
+  return getRequirementTemplate(db, id);
+}
+
+// Deterministic template matching — no scoring, no AI. Tries progressively
+// looser field combinations in the spec's exact priority order (item 48)
+// and returns the first tier that has any hits at all; only fields the job
+// actually has populated participate (an empty template field never
+// "matches" an empty job field).
+function normMatch(s) { return String(s || '').trim().toLowerCase(); }
+function suggestRequirementTemplates(job, templates) {
+  const active = templates.filter(t => t.is_active);
+  const jd = normMatch(job.department), jp = normMatch(job.peril), jpn = normMatch(job.policy_name);
+  const fieldMatches = (tmplVal, jobVal) => !!tmplVal && !!jobVal && normMatch(tmplVal) === jobVal;
+  const tiers = [
+    t => fieldMatches(t.policy_name, jpn) && fieldMatches(t.peril, jp) && fieldMatches(t.department, jd),
+    t => fieldMatches(t.policy_name, jpn) && fieldMatches(t.peril, jp),
+    t => fieldMatches(t.peril, jp) && fieldMatches(t.department, jd),
+    t => fieldMatches(t.policy_name, jpn),
+    t => fieldMatches(t.peril, jp),
+    t => fieldMatches(t.department, jd),
+  ];
+  for (const tierFn of tiers) {
+    const hits = active.filter(tierFn);
+    if (hits.length > 0) return hits;
+  }
+  return [];
+}
+
+// ── Per-Job Requirement Checklist ───────────────────────────────────
+async function listJobRequirements(db, jobId) {
+  const { results } = await db.prepare('SELECT * FROM job_requirements WHERE job_id = ? ORDER BY sort_order ASC, created_at ASC').bind(jobId).all();
+  return results.map(r => ({ ...r, mandatory: !!r.mandatory }));
+}
+
+async function nextRequirementSortOrder(db, jobId) {
+  const row = await db.prepare('SELECT MAX(sort_order) as m FROM job_requirements WHERE job_id = ?').bind(jobId).first();
+  return (row && row.m != null ? row.m : -1) + 1;
+}
+
+async function createJobRequirement(db, jobId, body, user) {
+  const job = await db.prepare('SELECT id FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) throw new Error('job not found');
+
+  let name, type, category, requirementId = null;
+  if (body.requirement_id) {
+    const master = await db.prepare('SELECT * FROM requirement_master WHERE id = ?').bind(body.requirement_id).first();
+    if (!master) throw new Error('master requirement not found');
+    if (!master.is_active) throw new Error('This requirement is inactive in the master and cannot be added');
+    const dup = await db.prepare('SELECT 1 FROM job_requirements WHERE job_id = ? AND requirement_id = ?').bind(jobId, body.requirement_id).first();
+    if (dup) throw new Error(`"${master.name}" is already on this claim's checklist`);
+    requirementId = master.id; name = master.name; type = master.requirement_type; category = master.category;
+  } else {
+    name = (body.requirement_name || '').trim();
+    if (!name) throw new Error('Requirement Name is required');
+    type = REQUIREMENT_TYPES.includes(body.requirement_type) ? body.requirement_type : 'other';
+    category = (body.category || '').trim();
+  }
+  const mandatory = body.mandatory === false ? 0 : 1;
+  const sortOrder = await nextRequirementSortOrder(db, jobId);
+
+  const now = Date.now();
+  const id = `JR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO job_requirements (id, job_id, requirement_id, requirement_name, requirement_type, category, mandatory, status, sort_order, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, requirementId, name, type, category, mandatory, 'pending', sortOrder, user.id, now, now).run();
+
+  await appendJobActivity(db, jobId, [{ text: `${user.id} added requirement "${name}" to the checklist.`, ts: now, actor: user.id }]);
+  return db.prepare('SELECT * FROM job_requirements WHERE id = ?').bind(id).first();
+}
+
+async function updateJobRequirement(db, jobId, reqId, body, user) {
+  const existing = await db.prepare('SELECT * FROM job_requirements WHERE id = ? AND job_id = ?').bind(reqId, jobId).first();
+  if (!existing) throw new Error('requirement not found');
+
+  const changes = [];
+  const sets = ['updated_at = ?'];
+  const values = [Date.now()];
+
+  if (body.status !== undefined) {
+    if (!REQUIREMENT_STATUSES.includes(body.status)) throw new Error('Invalid requirement status');
+    const isMandatory = !!existing.mandatory;
+    if (body.status === 'waived') {
+      if (isMandatory && !canWaiveMandatoryRequirement(user)) {
+        throw new Error('Only an Admin or Director may waive a mandatory requirement');
+      }
+      const reason = (body.waiver_reason || '').trim();
+      if (!reason) throw new Error('Waiver Reason is required');
+      sets.push('waived_date = ?', 'waived_by = ?', 'waiver_reason = ?');
+      values.push(todayIST(), user.id, reason);
+      changes.push(`waived — ${reason}`);
+    } else if (body.status === 'received' && existing.status !== 'received') {
+      const receivedDate = body.received_date && EVENT_DATE_RE.test(body.received_date) ? body.received_date : todayIST();
+      sets.push('received_date = ?'); values.push(receivedDate);
+      changes.push(`marked Received (${receivedDate})`);
+    } else if (body.status === 'partial' && existing.status !== 'partial') {
+      changes.push('marked Partial');
+    } else if (body.status === 'not_applicable' && existing.status !== 'not_applicable') {
+      changes.push('marked Not Applicable');
+    } else if (body.status === 'pending' && existing.status !== 'pending') {
+      changes.push('reset to Pending');
+    }
+    sets.push('status = ?'); values.push(body.status);
+  }
+  if (body.remarks !== undefined) { sets.push('remarks = ?'); values.push(String(body.remarks).trim()); }
+  if (body.mandatory !== undefined) { sets.push('mandatory = ?'); values.push(body.mandatory ? 1 : 0); }
+  if (body.requested_date !== undefined) {
+    const rd = String(body.requested_date).trim();
+    if (rd && !EVENT_DATE_RE.test(rd)) throw new Error('Requested Date must be YYYY-MM-DD');
+    sets.push('requested_date = ?'); values.push(rd);
+  }
+
+  values.push(reqId);
+  await db.prepare(`UPDATE job_requirements SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
+
+  if (changes.length > 0) {
+    await appendJobActivity(db, jobId, [{
+      text: `${user.id} updated requirement "${existing.requirement_name}" — ${changes.join('; ')}.`, ts: Date.now(), actor: user.id,
+    }]);
+  }
+  return db.prepare('SELECT * FROM job_requirements WHERE id = ?').bind(reqId).first();
+}
+
+// Safe delete only — a requirement with any real history (status ever left
+// Pending, a follow-up logged, a receipt linked) must be resolved via Not
+// Applicable/Waived instead, never destructively removed (spec item 51).
+async function deleteJobRequirement(db, jobId, reqId, user) {
+  const existing = await db.prepare('SELECT * FROM job_requirements WHERE id = ? AND job_id = ?').bind(reqId, jobId).first();
+  if (!existing) throw new Error('requirement not found');
+  if (existing.status !== 'pending') throw new Error('This requirement already has status history — use Not Applicable or Waived instead of deleting');
+  const followupCount = await db.prepare('SELECT COUNT(*) as c FROM requirement_followups WHERE job_requirement_id = ?').bind(reqId).first();
+  if (followupCount.c > 0) throw new Error('This requirement has follow-up history and cannot be deleted — use Not Applicable or Waived instead');
+  const linkCount = await db.prepare('SELECT COUNT(*) as c FROM document_receipt_requirement_links WHERE job_requirement_id = ?').bind(reqId).first();
+  if (linkCount.c > 0) throw new Error('This requirement is linked to a document receipt and cannot be deleted');
+  await db.prepare('DELETE FROM job_requirements WHERE id = ?').bind(reqId).run();
+  await appendJobActivity(db, jobId, [{ text: `${user.id} removed requirement "${existing.requirement_name}" (added in error, no history).`, ts: Date.now(), actor: user.id }]);
+  return { ok: true };
+}
+
+// Applies a subset (or all) of a template's items to a claim. Never
+// duplicates a master requirement already on the checklist (dedupe by
+// requirement_id — the unique index on job_requirements is the hard
+// backstop, this is the friendly pre-check). Confirmation happens in the
+// frontend preview; this endpoint itself still requires an explicit
+// template_id + selection, never applies anything implicitly.
+async function applyRequirementTemplate(db, jobId, body, user) {
+  const job = await db.prepare('SELECT id FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) throw new Error('job not found');
+  const template = await getRequirementTemplate(db, body.template_id);
+  if (!template) throw new Error('template not found');
+  if (!template.is_active) throw new Error('This template is inactive');
+
+  const selectedIds = Array.isArray(body.requirement_ids) ? new Set(body.requirement_ids) : null;
+  const itemsToApply = template.items.filter(it => !selectedIds || selectedIds.has(it.requirement_id));
+  if (itemsToApply.length === 0) throw new Error('No requirements selected to apply');
+
+  const { results: existingRows } = await db.prepare('SELECT requirement_id FROM job_requirements WHERE job_id = ? AND requirement_id IS NOT NULL').bind(jobId).all();
+  const existingIds = new Set(existingRows.map(r => r.requirement_id));
+
+  let sortOrder = await nextRequirementSortOrder(db, jobId);
+  const now = Date.now();
+  const created = [], skipped = [];
+  let i = 0;
+  for (const item of itemsToApply) {
+    if (existingIds.has(item.requirement_id)) { skipped.push(item.requirement_name); continue; }
+    const id = `JR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}-${i++}`;
+    await db.prepare(`
+      INSERT INTO job_requirements (id, job_id, requirement_id, requirement_name, requirement_type, category, mandatory, status, sort_order, created_by, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `).bind(id, jobId, item.requirement_id, item.requirement_name, item.requirement_type, item.requirement_category,
+      item.mandatory ? 1 : 0, 'pending', sortOrder++, user.id, now, now).run();
+    created.push(item.requirement_name);
+    existingIds.add(item.requirement_id);
+  }
+
+  if (created.length > 0) {
+    await appendJobActivity(db, jobId, [{
+      text: `${user.id} applied template "${template.name}" — added ${created.length} requirement(s)${skipped.length ? ` (${skipped.length} already existed, skipped)` : ''}.`,
+      ts: now, actor: user.id,
+    }]);
+  }
+  return { created, skipped, total_applied: created.length };
+}
+
+// ── Follow-ups ───────────────────────────────────────────────────────
+async function listRequirementFollowups(db, jobRequirementId) {
+  const { results } = await db.prepare('SELECT * FROM requirement_followups WHERE job_requirement_id = ? ORDER BY followup_date DESC, created_at DESC').bind(jobRequirementId).all();
+  return results;
+}
+
+async function createRequirementFollowup(db, jobId, reqId, body, user) {
+  const req = await db.prepare('SELECT * FROM job_requirements WHERE id = ? AND job_id = ?').bind(reqId, jobId).first();
+  if (!req) throw new Error('requirement not found');
+  const followupDate = (body.followup_date || todayIST()).trim();
+  if (!EVENT_DATE_RE.test(followupDate)) throw new Error('Follow-up Date must be YYYY-MM-DD');
+  const mode = FOLLOWUP_MODES.includes(body.mode) ? body.mode : '';
+  const source = FOLLOWUP_SOURCES.includes(body.source) ? body.source : 'manual_followup';
+  const remarks = (body.remarks || '').trim();
+
+  const now = Date.now();
+  const id = `RF-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO requirement_followups (id, job_requirement_id, followup_date, mode, source, remarks, claim_reminder_id, created_by, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).bind(id, reqId, followupDate, mode, source, remarks, body.claim_reminder_id || '', user.id, now).run();
+
+  // First-ever follow-up also sets requested_date if it was never set —
+  // never overwritten on later follow-ups (spec item 33: date basis must
+  // reflect when it was actually first requested, not the latest nudge).
+  if (!req.requested_date) {
+    await db.prepare('UPDATE job_requirements SET requested_date = ?, updated_at = ? WHERE id = ?').bind(followupDate, now, reqId).run();
+  }
+  await appendJobActivity(db, jobId, [{ text: `${user.id} logged a follow-up for "${req.requirement_name}"${mode ? ' via ' + mode : ''}.`, ts: now, actor: user.id }]);
+  return db.prepare('SELECT * FROM requirement_followups WHERE id = ?').bind(id).first();
+}
+
+// ── Document Receipt ↔ Requirement Linking ──────────────────────────
+// `links`: [{ requirement_id, mark_received }]. Linking and marking
+// Received are deliberately the same explicit user action here (the
+// receipt-entry UI presents "which requirements did this batch satisfy" —
+// checking one IS the explicit received signal spec item AB requires), but
+// mark_received is still a distinct per-item flag, never inferred.
+async function linkReceiptToRequirements(db, jobId, receiptId, links, user) {
+  const receipt = await db.prepare('SELECT id FROM document_receipt_events WHERE id = ? AND job_id = ?').bind(receiptId, jobId).first();
+  if (!receipt) throw new Error('document receipt not found on this claim');
+
+  const now = Date.now();
+  const linkedIds = [];
+  let i = 0;
+  for (const link of links) {
+    // Cross-job security: the requirement must belong to the SAME job as
+    // the receipt (spec item 72) — a forged requirement_id from another
+    // claim simply won't be found here and throws.
+    const req = await db.prepare('SELECT * FROM job_requirements WHERE id = ? AND job_id = ?').bind(link.requirement_id, jobId).first();
+    if (!req) throw new Error(`Requirement ${link.requirement_id} not found on this claim`);
+    const existingLink = await db.prepare('SELECT 1 FROM document_receipt_requirement_links WHERE receipt_event_id = ? AND job_requirement_id = ?').bind(receiptId, link.requirement_id).first();
+    if (!existingLink) {
+      const id = `DRRL-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}-${i++}`;
+      await db.prepare('INSERT INTO document_receipt_requirement_links (id, receipt_event_id, job_requirement_id, created_at) VALUES (?,?,?,?)')
+        .bind(id, receiptId, link.requirement_id, now).run();
+    }
+    linkedIds.push(link.requirement_id);
+    if (link.mark_received && req.status !== 'received') {
+      await db.prepare('UPDATE job_requirements SET status = ?, received_date = ?, updated_at = ? WHERE id = ?')
+        .bind('received', todayIST(), now, link.requirement_id).run();
+      await appendJobActivity(db, jobId, [{ text: `${user.id} marked requirement "${req.requirement_name}" Received (via document receipt).`, ts: now, actor: user.id }]);
+    }
+  }
+  return linkedIds;
+}
+
+async function listReceiptRequirementLinks(db, jobId) {
+  const { results } = await db.prepare(`
+    SELECT drrl.receipt_event_id, drrl.job_requirement_id
+    FROM document_receipt_requirement_links drrl
+    JOIN job_requirements jr ON jr.id = drrl.job_requirement_id
+    WHERE jr.job_id = ?
+  `).bind(jobId).all();
+  return results;
+}
+
+// ── Director Control Centre integration: Document Control ──────────
+// Reuses each open row's already-computed ctx.documentReadiness /
+// ctx.requirements (buildWorkflowContexts computes these once per job,
+// same bulk pass Control Centre already relies on for everything else —
+// no second query, no N+1).
+function buildDocumentControl(openRows) {
+  const todayStr = todayIST();
+  const awaitingDocuments = [], reminderDue = [], reminderOverdue = [], readyForVerification = [], noChecklist = [];
+  for (const r of openRows) {
+    const hasChecklist = r.ctx.requirements && r.ctx.requirements.length > 0;
+    if (!hasChecklist) {
+      if (r.analysis.attention.some(a => a.code === 'no_requirement_checklist')) noChecklist.push(ccJobRow(r));
+      continue;
+    }
+    const dr = r.ctx.documentReadiness;
+    const row = { ...ccJobRow(r), mandatory_total: dr.mandatory_total, mandatory_resolved: dr.mandatory_resolved,
+      pending: dr.pending, partial: dr.partial, next_followup_date: dr.next_followup_date };
+    if (dr.status === 'awaiting_documents' || dr.status === 'partially_received') awaitingDocuments.push(row);
+    if (dr.status === 'ready_for_verification') readyForVerification.push(row);
+    if (dr.reminder_due) {
+      if (dr.next_followup_date && dr.next_followup_date < todayStr) reminderOverdue.push(row);
+      else reminderDue.push(row);
+    }
+  }
+  return {
+    awaiting_documents: awaitingDocuments, reminder_due: reminderDue, reminder_overdue: reminderOverdue,
+    ready_for_verification: readyForVerification, no_checklist: noChecklist,
   };
 }
 
@@ -3499,6 +4074,121 @@ export default {
       if (pathname === '/api/control-centre' && request.method === 'GET') {
         if (!canAccessControlCentre(user)) return error('Only an Admin or Director may view the Control Centre', 403);
         return json(await buildDirectorControlCentre(db, user));
+      }
+
+      // ── REQUIREMENTS & DOCUMENT INTELLIGENCE (V1.7) ──────────────────
+      if (pathname === '/api/requirements/master' && request.method === 'GET') {
+        return json(await listRequirementMaster(db));
+      }
+      if (pathname === '/api/requirements/master' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await createRequirementMaster(db, body, user), 201);
+      }
+      {
+        const masterItemMatch = pathname.match(/^\/api\/requirements\/master\/([^/]+)$/);
+        if (masterItemMatch && request.method === 'PUT') {
+          const id = decodeURIComponent(masterItemMatch[1]);
+          const body = await request.json();
+          return json(await updateRequirementMaster(db, id, body, user));
+        }
+      }
+
+      if (pathname === '/api/requirement-templates' && request.method === 'GET') {
+        return json(await listRequirementTemplates(db));
+      }
+      if (pathname === '/api/requirement-templates' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await createRequirementTemplate(db, body, user), 201);
+      }
+      {
+        const templateItemMatch = pathname.match(/^\/api\/requirement-templates\/([^/]+)$/);
+        if (templateItemMatch && request.method === 'PUT') {
+          const id = decodeURIComponent(templateItemMatch[1]);
+          const body = await request.json();
+          return json(await updateRequirementTemplate(db, id, body, user));
+        }
+      }
+
+      {
+        const templateSuggestMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/requirements\/suggest-templates\/?$/);
+        if (templateSuggestMatch && request.method === 'GET') {
+          const jobId = decodeURIComponent(templateSuggestMatch[1]);
+          const job = await db.prepare('SELECT department, peril, policy_name FROM jobs WHERE id = ?').bind(jobId).first();
+          if (!job) return error('job not found', 404);
+          const templates = await listRequirementTemplates(db);
+          return json(suggestRequirementTemplates(job, templates));
+        }
+      }
+
+      {
+        const applyTemplateMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/requirements\/apply-template\/?$/);
+        if (applyTemplateMatch && request.method === 'POST') {
+          const jobId = decodeURIComponent(applyTemplateMatch[1]);
+          const body = await request.json();
+          return json(await applyRequirementTemplate(db, jobId, body, user), 201);
+        }
+      }
+
+      {
+        const lorRequestMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/requirements\/lor-request\/?$/);
+        if (lorRequestMatch && request.method === 'POST') {
+          const jobId = decodeURIComponent(lorRequestMatch[1]);
+          const body = await request.json();
+          const ids = Array.isArray(body.requirement_ids) ? body.requirement_ids : [];
+          const results = [];
+          for (const reqId of ids) {
+            results.push(await createRequirementFollowup(db, jobId, reqId, { followup_date: body.followup_date, mode: body.mode, source: 'lor', remarks: body.remarks }, user));
+          }
+          return json({ logged: results.length }, 201);
+        }
+      }
+
+      {
+        const reqFollowupMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/requirements\/([^/]+)\/followups\/?$/);
+        if (reqFollowupMatch) {
+          const jobId = decodeURIComponent(reqFollowupMatch[1]);
+          const reqId = decodeURIComponent(reqFollowupMatch[2]);
+          if (request.method === 'GET') return json(await listRequirementFollowups(db, reqId));
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await createRequirementFollowup(db, jobId, reqId, body, user), 201);
+          }
+        }
+      }
+
+      {
+        const reqItemMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/requirements\/([^/]+)$/);
+        if (reqItemMatch) {
+          const jobId = decodeURIComponent(reqItemMatch[1]);
+          const reqId = decodeURIComponent(reqItemMatch[2]);
+          if (request.method === 'PUT') {
+            const body = await request.json();
+            return json(await updateJobRequirement(db, jobId, reqId, body, user));
+          }
+          if (request.method === 'DELETE') {
+            return json(await deleteJobRequirement(db, jobId, reqId, user));
+          }
+        }
+      }
+
+      {
+        const reqCollectionMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/requirements\/?$/);
+        if (reqCollectionMatch) {
+          const jobId = decodeURIComponent(reqCollectionMatch[1]);
+          if (request.method === 'GET') return json(await listJobRequirements(db, jobId));
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await createJobRequirement(db, jobId, body, user), 201);
+          }
+        }
+      }
+
+      {
+        const reqLinksMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/requirement-links\/?$/);
+        if (reqLinksMatch && request.method === 'GET') {
+          const jobId = decodeURIComponent(reqLinksMatch[1]);
+          return json(await listReceiptRequirementLinks(db, jobId));
+        }
       }
 
       {
