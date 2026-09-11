@@ -254,18 +254,10 @@ details.sp-section[open] summary{margin-bottom:0}
 .task-dash-num{font-size:20px;font-weight:700;color:var(--text-pri)}
 .task-dash-lbl{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em}
 
-/* ── LIVE WORKING (V1.3) ── */
-.active-work-bar{display:flex;align-items:center;gap:12px;background:var(--navy);color:#fff;padding:8px 16px;font-size:12.5px;flex-wrap:wrap}
-.active-work-bar[hidden]{display:none!important}
-.awb-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;color:var(--amber-lt);font-weight:700}
-.awb-title{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.awb-timer{font-family:'DM Mono',monospace;font-size:13px;color:var(--amber-lt);font-weight:600}
-.awb-actions{display:flex;gap:6px}
-.awb-actions .btn-secondary{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#fff;padding:5px 12px;font-size:12px}
+/* ── WORK TRACKING (V1.3, simplified V1.8 — Start/Stop only, no live bar) ── */
 .task-live-row{font-size:11.5px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
 .task-live-row.working{color:var(--green);font-weight:600;display:flex;align-items:center;gap:8px}
 .task-live-row.working .task-live-badge{font-family:'DM Mono',monospace;font-size:9.5px;letter-spacing:.06em}
-.task-live-row.working .task-live-timer{font-family:'DM Mono',monospace}
 .task-live-row.other{color:var(--blue)}
 .task-live-row.idle{color:var(--text-faint)}
 .task-card-actions{display:flex;gap:6px;margin-top:8px}
@@ -509,22 +501,11 @@ details.sp-section[open] summary{margin-bottom:0}
   <div class="topbar-right">
     <span class="live-dot" id="liveDot" title="Live sync"></span>
     <span class="topbar-user" id="topbarUser"></span>
+    <button class="btn-secondary" id="refreshBtn" onclick="manualRefresh()" title="Refresh data">🔄 Refresh</button>
     <button class="btn-logout" onclick="logout()">Log out</button>
     <button class="btn-secondary" onclick="openTaskForm()">+ Add Task</button>
     <button class="btn-secondary" id="bulkImportBtn" onclick="openBulkImport()" hidden>+ Bulk Import</button>
     <button class="btn-new" onclick="openNewJob()">+ New Job</button>
-  </div>
-</div>
-
-<!-- ── ACTIVE WORK BAR (V1.3) — persists across every view; not part of
-     any .view container, so switchView() never hides it. ── -->
-<div class="active-work-bar" id="activeWorkBar" hidden>
-  <span class="awb-label">WORKING NOW</span>
-  <span class="awb-title" id="awb-title"></span>
-  <span class="awb-timer" id="awb-timer">00:00:00</span>
-  <div class="awb-actions">
-    <button type="button" class="btn-secondary" onclick="pauseCurrentWork()">Pause</button>
-    <button type="button" class="btn-secondary" onclick="openCurrentWorkTask()">Open Task</button>
   </div>
 </div>
 
@@ -583,37 +564,35 @@ details.sp-section[open] summary{margin-bottom:0}
 </div>
 
 <!-- ── MY WORK VIEW (V1.4) ── -->
+<!-- V1.8: simplified — plain operational grouping, no scoring/ranking/pin/
+     available-time matching. Two sections: Workflow Actions (derived from
+     claim milestones) and Assigned Tasks (Overdue/Today/Upcoming/No Due
+     Date/Waiting/Completed, sorted by priority then due date only). -->
 <div class="view" id="view-mywork">
   <div class="mywork-wrap">
     <div class="mywork-summary" id="mw-summary"></div>
-
-    <div class="ihavetime-row" id="ihaveTimeRow">
-      <span class="ihavetime-label">I Have Time:</span>
-      <button type="button" class="ihavetime-btn" data-min="10" onclick="setAvailableMinutes(10)">10 min</button>
-      <button type="button" class="ihavetime-btn" data-min="15" onclick="setAvailableMinutes(15)">15 min</button>
-      <button type="button" class="ihavetime-btn" data-min="30" onclick="setAvailableMinutes(30)">30 min</button>
-      <button type="button" class="ihavetime-btn" data-min="45" onclick="setAvailableMinutes(45)">45 min</button>
-      <button type="button" class="ihavetime-btn" data-min="60" onclick="setAvailableMinutes(60)">1 hr</button>
-      <button type="button" class="ihavetime-btn" data-min="90" onclick="setAvailableMinutes(90)">1.5 hr</button>
-      <button type="button" class="ihavetime-btn" data-min="120" onclick="setAvailableMinutes(120)">2 hr</button>
-      <button type="button" class="ihavetime-btn clear" id="ihaveTimeClear" onclick="setAvailableMinutes(null)" hidden>Clear</button>
-    </div>
-
     <div class="mw-now-card" id="mw-now-card"></div>
 
-    <div class="mw-section-hdr">Next</div>
-    <div id="mw-next-list"></div>
+    <div class="mw-section-hdr">Workflow Actions</div>
+    <div id="mw-workflow-actions"></div>
 
-    <div class="mw-section-hdr">Later <button type="button" class="wh-correct-btn" id="mw-later-toggle" onclick="toggleLaterExpanded()" hidden></button></div>
-    <div id="mw-later-list"></div>
+    <div class="mw-section-hdr">Overdue</div>
+    <div id="mw-overdue-list"></div>
 
-    <div class="mw-section-hdr">Waiting / Blocked</div>
-    <div id="mw-waiting-blocked"></div>
+    <div class="mw-section-hdr">Today</div>
+    <div id="mw-today-list"></div>
 
-    <div id="mw-closed-claim-wrap" hidden>
-      <div class="mw-section-hdr">Linked Claim Closed</div>
-      <div id="mw-closed-claim-list"></div>
-    </div>
+    <div class="mw-section-hdr">Upcoming</div>
+    <div id="mw-upcoming-list"></div>
+
+    <div class="mw-section-hdr">No Due Date</div>
+    <div id="mw-noduedate-list"></div>
+
+    <div class="mw-section-hdr">Waiting</div>
+    <div id="mw-waiting-list"></div>
+
+    <div class="mw-section-hdr">Completed <button type="button" class="wh-correct-btn" onclick="toggleMwCompleted()" id="mw-completed-toggle">Show</button></div>
+    <div id="mw-completed-list" hidden></div>
   </div>
 </div>
 
@@ -624,7 +603,6 @@ details.sp-section[open] summary{margin-bottom:0}
       <div class="task-mode-toggle">
         <button class="task-mode-btn active" id="taskModeMyBtn" onclick="setTaskViewMode('my')">My Tasks</button>
         <button class="task-mode-btn" id="taskModeAllBtn" onclick="setTaskViewMode('all')">All Tasks</button>
-        <button class="task-mode-btn" id="taskModeLiveBtn" onclick="setTaskViewMode('live')">Live Team</button>
       </div>
       <button class="btn-new" onclick="openTaskForm()">+ Add Task</button>
     </div>
@@ -1279,6 +1257,20 @@ details.sp-section[open] summary{margin-bottom:0}
     <div class="modal-footer">
       <button class="btn-primary" onclick="submitJobRequirementForm()">Add Requirement</button>
       <button class="btn-secondary" onclick="closeJobRequirementForm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── ASSESSMENT REVISION MODAL (V1.8) ── -->
+<div class="modal-overlay" id="revisionModal" hidden onclick="event.target===this&&closeRevisionModal()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="rev-modal-title">Assessment Revision</h2>
+      <button class="sp-close" onclick="closeRevisionModal()">✕</button>
+    </div>
+    <div class="modal-body" id="rev-modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeRevisionModal()">Close</button>
     </div>
   </div>
 </div>
@@ -1989,17 +1981,13 @@ let editingFeeReceiptId = null;
 let closingJobId = null;
 let editingVisitId = null;
 let tasks = [];
-let taskViewMode = 'my';   // 'my' | 'all' | 'live'
+let taskViewMode = 'my';   // 'my' | 'all'
 let editingTaskId = null;
-let liveWork = [];         // every currently-open work session, all staff (from /api/work/live)
-let workSessions = [];     // recent session history, most-recent-first, capped 500 (from /api/work/sessions)
+let currentWorkSession = null; // the CURRENT user's own active session only (from /api/work/current) — V1.8: no more company-wide live feed
+let workSessions = [];     // recent session history, most-recent-first, capped 500 (from /api/work/sessions) — lazy-loaded, Work Log view only
 let taskWorkSessionsCache = []; // sessions for the Task Detail modal currently open (on-demand fetch)
 let editingSessionId = null;     // work session currently being corrected inline (Admin/Director only)
 let myWork = null;               // last fetched /api/my-work response
-let availableMinutesFilter = null; // "I Have Time" selection — UI-only, session-scoped (see restoreAvailableMinutesFilter())
-let laterExpanded = false;       // My Work LATER section "Show all" toggle
-let awbTimerInterval = null;     // ticking interval for the global Active Work Bar
-let taskCardTimerInterval = null; // ticking interval for "WORKING NOW" badges on task cards
 let workflowAttention = [];      // last fetched /api/workflow/attention response (Dashboard)
 let currentJobWorkflow = null;   // last fetched /api/jobs/:id/workflow response (open Job Detail panel)
 
@@ -2051,7 +2039,8 @@ let currentUser = null;        // logged-in staff id
 let currentUserRecord = null;  // full staff record {id,name,role,access_role,...}
 let stageFilter = null;
 let openJobId   = null;
-let pollTimer   = null;
+let refreshTimer = null; // V1.8: slow, visible-tab-only auto-refresh — see startAutoRefresh()
+const REFRESH_INTERVAL_MS = 90000; // 90s — event-driven (manual Refresh / actions) is primary; this is just a safety net
 let apiReady    = API !== 'YOUR_WORKER_URL_HERE';
 
 function isAdminUser() {
@@ -2129,19 +2118,15 @@ function onLoggedIn() {
   document.getElementById('addRequirementTemplateBtn').hidden = !isAdminUser();
   buildNewJobAssign();
   buildLogFilters();
-  restoreAvailableMinutesFilter();
   loadRequirementMaster();
   loadRequirementTemplates();
+  loadMyWork(); // one-time fetch so the Dashboard's My Work widget has real data immediately — not polled thereafter
   fetchAll();
-  if (!pollTimer) pollTimer = setInterval(fetchAll, 5000);
-  if (!taskCardTimerInterval) startTaskCardTimers();
+  startAutoRefresh();
 }
 
 function sessionExpired() {
-  clearInterval(pollTimer);
-  pollTimer = null;
-  stopTaskCardTimers();
-  stopAwbTimer();
+  stopAutoRefresh();
   currentUser = null;
   currentUserRecord = null;
   showLogin();
@@ -2153,35 +2138,34 @@ async function logout() {
 }
 
 // ── API CALLS ─────────────────────────────────────────────────
+// V1.8 — LEAN: only the reference data every view might need is fetched
+// here (8 endpoints, was 11) — no /api/log, no company-wide /api/work/live,
+// no /api/work/sessions, no /api/my-work: those are lazy-loaded only by
+// the view that actually shows them (Work Log, My Work), same pattern
+// Director Control Centre already established. This function itself is
+// no longer polled every 5s — see startAutoRefresh()/manualRefresh().
 async function fetchAll() {
   try {
-    const myWorkUrl = '/api/my-work' + (availableMinutesFilter ? ('?available_minutes=' + availableMinutesFilter) : '');
-    const [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes, wfRes] = await Promise.all([
+    const [jRes, sRes, iRes, bRes, setRes, tRes, curRes, wfRes] = await Promise.all([
       fetch(API + '/api/jobs'),
-      fetch(API + '/api/log'),
       fetch(API + '/api/staff'),
       fetch(API + '/api/insurers'),
       fetch(API + '/api/branches'),
       fetch(API + '/api/settings'),
       fetch(API + '/api/tasks'),
-      fetch(API + '/api/work/live'),
-      fetch(API + '/api/work/sessions'),
-      fetch(API + myWorkUrl),
+      fetch(API + '/api/work/current'),
       fetch(API + '/api/workflow/attention'),
     ]);
-    const all = [jRes, lRes, sRes, iRes, bRes, setRes, tRes, liveRes, wsRes, mwRes, wfRes];
+    const all = [jRes, sRes, iRes, bRes, setRes, tRes, curRes, wfRes];
     if (all.some(r => r.status === 401)) { sessionExpired(); return; }
     if (all.some(r => !r.ok)) throw new Error('bad response');
     jobs = await jRes.json();
-    log  = await lRes.json();
     TEAM = await sRes.json();
     INSURERS = await iRes.json();
     BRANCHES = await bRes.json();
     SETTINGS = await setRes.json();
     tasks = await tRes.json();
-    liveWork = await liveRes.json();
-    workSessions = await wsRes.json();
-    myWork = await mwRes.json();
+    currentWorkSession = await curRes.json();
     workflowAttention = await wfRes.json();
     setOnline(true);
     buildLogFilters();
@@ -2189,10 +2173,47 @@ async function fetchAll() {
     renderSettingsPanel();
     if (document.getElementById('newJobModal').hidden) buildNewJobAssign();
     renderAll();
+    if (isViewActive('log')) loadWorkLog();
+    if (isViewActive('mywork')) loadMyWork();
   } catch(e) {
     setOnline(false);
   }
 }
+
+function isViewActive(name) {
+  const el = document.getElementById('view-' + name);
+  return !!el && el.classList.contains('active');
+}
+
+// ── Event-driven refresh (V1.8) — replaces the old 5-second global poll.
+// fetchAll() now runs: once at login, once whenever the user clicks
+// Refresh, once after this tab regains visibility (catch-up), and
+// otherwise only on a slow 90s safety-net timer that is itself paused
+// the instant the tab is hidden — a background/minimized tab makes ZERO
+// D1 requests. This is the actual fix for the D1 read-volume issue (see
+// HANDOFF_NOTES.md for the full before/after analysis).
+function startAutoRefresh() {
+  stopAutoRefresh();
+  if (document.visibilityState === 'visible') {
+    refreshTimer = setInterval(fetchAll, REFRESH_INTERVAL_MS);
+  }
+}
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+}
+function manualRefresh() {
+  fetchAll();
+  if (isViewActive('controlcentre')) loadControlCentre();
+}
+document.addEventListener('visibilitychange', () => {
+  if (!currentUser) return; // not logged in yet — nothing to refresh
+  if (document.visibilityState === 'visible') {
+    fetchAll(); // catch up immediately on return, then resume the safety-net timer
+    startAutoRefresh();
+  } else {
+    stopAutoRefresh();
+  }
+});
 
 async function apiPost(path, body) {
   const r = await fetch(API + path, {
@@ -2250,15 +2271,27 @@ function renderAll() {
   renderStats();
   renderKanban();
   renderStaff();
-  renderLog();
-  renderTaskWorkLog();
   renderTaskDashWidget();
   renderTasksView();
-  renderActiveWorkBar();
   renderMyWorkDashWidget();
   renderMyWorkView();
   renderClaimsNeedingAttention();
   renderAllClaimsView();
+}
+
+// V1.8: Work Log (activity feed + task work-session history) is heavy
+// (up to 500 rows) and rarely needs to be current-to-the-second — fetched
+// only when this view is actually opened, or on its own manual refresh,
+// never as part of the core poll.
+async function loadWorkLog() {
+  try {
+    const [lRes, wsRes] = await Promise.all([fetch(API + '/api/log'), fetch(API + '/api/work/sessions')]);
+    if (lRes.status === 401 || wsRes.status === 401) { sessionExpired(); return; }
+    log = await lRes.json();
+    workSessions = await wsRes.json();
+  } catch (e) { /* keep whatever was last loaded */ }
+  renderLog();
+  renderTaskWorkLog();
 }
 
 // ── STATS STRIP ───────────────────────────────────────────────
@@ -2531,6 +2564,7 @@ function openJob(id) {
   toggleBillFields();
   loadJobWorkflow(id);
   loadJobRequirements(id);
+  loadAssessmentRevisions(id);
 
   document.getElementById('overlay').classList.add('open');
   document.getElementById('sidePanel').classList.add('open');
@@ -3301,6 +3335,144 @@ function copyPendingRequirements() {
   );
 }
 
+// ── ASSESSMENT REVISIONS (V1.8) ─────────────────────────────────────
+// The ORIGINAL assessment stays exactly the existing Assessment/Approvals
+// fields above (jobs.* — untouched by this module). This only manages
+// insurer-driven revisions R1-R3, each its own row, all historically
+// visible. Reuses canCloseJobs() (Admin/Director) for the Director-only
+// verification action — same predicate as Close Job.
+let currentJobRevisions = [];
+
+async function loadAssessmentRevisions(jobId) {
+  const card = document.getElementById('sp-assessment-revisions-card');
+  try {
+    currentJobRevisions = await apiGet('/api/jobs/' + encodeURIComponent(jobId) + '/assessment-revisions');
+    if (openJobId !== jobId) return;
+    if (card) card.innerHTML = assessmentRevisionsCardHtml(jobId);
+  } catch (e) {
+    if (card) card.innerHTML = '<div style="font-size:12px;color:var(--text-faint)">Assessment revisions unavailable.</div>';
+  }
+}
+
+const REV_DIRECTOR_LABELS = { pending: 'Pending', approved: 'Approved', returned: 'Returned' };
+const REV_INSURER_LABELS = { pending: 'Pending', approved: 'Approved', revision_required: 'Revision Required', rejected: 'Rejected' };
+
+function assessmentRevisionsCardHtml(jobId) {
+  const j = jobs.find(x => x.id === jobId);
+  const revs = currentJobRevisions;
+  if (revs.length === 0) {
+    if (!j || j.director_verification_status !== 'approved') {
+      return '<div style="font-size:12px;color:var(--text-faint)">No revisions — the original assessment has not yet been Director-approved.</div>';
+    }
+    return `<div style="font-size:12px;color:var(--text-faint);margin-bottom:8px">No revisions yet.</div>
+      <button type="button" class="btn-secondary" onclick="openRequestRevisionModal('${jobId}')">Request Insurer Revision</button>`;
+  }
+  const rows = revs.map(r => `
+    <div class="req-row">
+      <span class="req-name">Revision ${r.revision_no}</span>
+      <span class="req-badge ${r.director_status === 'approved' ? 'received' : r.director_status === 'returned' ? 'pending' : 'partial'}">Director: ${esc(REV_DIRECTOR_LABELS[r.director_status])}</span>
+      <span class="req-badge ${r.insurer_status === 'approved' ? 'received' : (r.insurer_status === 'revision_required' || r.insurer_status === 'rejected') ? 'pending' : 'partial'}">Insurer: ${esc(REV_INSURER_LABELS[r.insurer_status])}</span>
+      <span class="req-meta">${r.assessed_amount ? '₹' + esc(r.assessed_amount) : 'Not yet prepared'}</span>
+      <button type="button" class="wh-correct-btn" onclick="openRevisionModal('${jobId}','${r.id}')">Manage</button>
+    </div>`).join('');
+  const latest = revs[revs.length - 1];
+  const limitReached = latest.insurer_status === 'revision_required' && latest.revision_no >= 3;
+  return `<div class="bi-preview-wrap" style="max-height:220px">${rows}</div>` +
+    (limitReached ? '<div style="font-size:12px;color:var(--red);margin-top:8px;font-weight:600">⚠ Assessment Revision Limit Reached — Director intervention required.</div>' : '');
+}
+
+function openRequestRevisionModal(jobId) {
+  document.getElementById('rev-modal-title').textContent = 'Request Insurer Revision';
+  document.getElementById('rev-modal-body').innerHTML = `
+    <div class="form-field full">
+      <label>Insurer Revision Reason *</label>
+      <textarea class="notes-area" id="rev-request-reason" rows="3" placeholder="Why did the insurer return the original assessment?"></textarea>
+    </div>
+    <button type="button" class="btn-primary" style="margin-top:10px" onclick="submitRequestRevision('${jobId}')">Create Revision 1</button>`;
+  document.getElementById('revisionModal').hidden = false;
+}
+async function submitRequestRevision(jobId) {
+  const reason = document.getElementById('rev-request-reason').value.trim();
+  if (!reason) { alert('Insurer Revision Reason is required.'); return; }
+  try {
+    await apiPost('/api/jobs/' + encodeURIComponent(jobId) + '/assessment-revisions', { insurer_revision_reason: reason });
+    closeRevisionModal();
+    await loadAssessmentRevisions(jobId);
+    loadJobWorkflow(jobId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+function openRevisionModal(jobId, revId) {
+  const r = currentJobRevisions.find(x => x.id === revId);
+  if (!r) return;
+  document.getElementById('rev-modal-title').textContent = `Revision ${r.revision_no}`;
+  const body = document.getElementById('rev-modal-body');
+  body.innerHTML = `
+    <div class="modal-subsection-label">Preparation</div>
+    <div class="modal-grid">
+      <div class="sp-field"><label>Assessment Date</label><input type="date" id="rev-date" value="${r.assessment_date || ''}"></div>
+      <div class="sp-field"><label>Assessed Amount (₹)</label><input id="rev-amount" inputmode="decimal" value="${esc(r.assessed_amount || '')}"></div>
+    </div>
+    <button type="button" class="btn-secondary" onclick="submitRevisionPreparation('${jobId}','${revId}')">Save Preparation</button>
+
+    <div class="modal-subsection-label" style="margin-top:14px">Director Verification</div>
+    <div style="font-size:12px;color:var(--text-sec);margin-bottom:6px">Current: ${esc(REV_DIRECTOR_LABELS[r.director_status])}${r.director_return_reason ? ' — ' + esc(r.director_return_reason) : ''}</div>
+    ${canCloseJobs() ? `
+      <button type="button" class="btn-primary" onclick="submitRevisionDirector('${jobId}','${revId}','approved')">Approve</button>
+      <button type="button" class="btn-secondary" onclick="promptRevisionReturn('${jobId}','${revId}')">Return</button>
+    ` : '<div style="font-size:12px;color:var(--text-faint)">Director/Admin only.</div>'}
+
+    <div class="modal-subsection-label" style="margin-top:14px">Insurer Decision</div>
+    <div style="font-size:12px;color:var(--text-sec);margin-bottom:6px">Current: ${esc(REV_INSURER_LABELS[r.insurer_status])}${r.insurer_revision_reason ? ' — ' + esc(r.insurer_revision_reason) : ''}</div>
+    ${r.director_status === 'approved' ? `
+      <button type="button" class="btn-primary" onclick="submitRevisionInsurer('${jobId}','${revId}','approved')">Approved</button>
+      <button type="button" class="btn-secondary" onclick="promptRevisionRequired('${jobId}','${revId}')">Revision Required</button>
+      <button type="button" class="btn-secondary" onclick="submitRevisionInsurer('${jobId}','${revId}','rejected')">Rejected</button>
+    ` : '<div style="font-size:12px;color:var(--text-faint)">Director must approve this revision first.</div>'}
+  `;
+  document.getElementById('revisionModal').hidden = false;
+}
+function closeRevisionModal() { document.getElementById('revisionModal').hidden = true; }
+
+async function submitRevisionPreparation(jobId, revId) {
+  const assessment_date = document.getElementById('rev-date').value;
+  const assessed_amount = document.getElementById('rev-amount').value;
+  try {
+    await apiPut(`/api/jobs/${encodeURIComponent(jobId)}/assessment-revisions/${encodeURIComponent(revId)}/preparation`, { assessment_date, assessed_amount });
+    await loadAssessmentRevisions(jobId);
+    openRevisionModal(jobId, revId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function submitRevisionDirector(jobId, revId, director_status, director_return_reason) {
+  try {
+    await apiPut(`/api/jobs/${encodeURIComponent(jobId)}/assessment-revisions/${encodeURIComponent(revId)}/director`, { director_status, director_return_reason });
+    await loadAssessmentRevisions(jobId);
+    closeRevisionModal();
+    loadJobWorkflow(jobId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+function promptRevisionReturn(jobId, revId) {
+  const reason = prompt('Return Reason (required):');
+  if (reason === null) return;
+  if (!reason.trim()) { alert('Return Reason is required.'); return; }
+  submitRevisionDirector(jobId, revId, 'returned', reason.trim());
+}
+async function submitRevisionInsurer(jobId, revId, insurer_status, insurer_revision_reason) {
+  try {
+    const res = await apiPut(`/api/jobs/${encodeURIComponent(jobId)}/assessment-revisions/${encodeURIComponent(revId)}/insurer`, { insurer_status, insurer_revision_reason });
+    await loadAssessmentRevisions(jobId);
+    closeRevisionModal();
+    loadJobWorkflow(jobId);
+    if (res.next_revision) alert(`Revision ${res.next_revision.revision_no} has been activated.`);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+function promptRevisionRequired(jobId, revId) {
+  const reason = prompt('Insurer Revision Reason (required):');
+  if (reason === null) return;
+  if (!reason.trim()) { alert('Insurer Revision Reason is required.'); return; }
+  submitRevisionInsurer(jobId, revId, 'revision_required', reason.trim());
+}
+
 function buildJobPanel(j) {
   const stageButtons = STAGES.map(s => `
     <button class="stage-option-btn ${j.stage === s.id ? 'current' : ''}"
@@ -3611,6 +3783,14 @@ function buildJobPanel(j) {
       ${j.insurer_approval_required==='yes' && !['approved','partially_approved'].includes(j.insurer_approval_status) ? '<div class="sp-field-full" style="font-size:12px;color:var(--amber)">⚠ Insurer Approval is still pending.</div>' : ''}
     </div>
   </details>
+
+  <!-- Assessment Revisions (V1.8) — only when the ORIGINAL assessment above
+       has been Director-approved; up to 3 insurer-driven revision cycles,
+       each fully historically visible. -->
+  <div class="sp-section">
+    <div class="sp-section-label">Assessment Revisions</div>
+    <div id="sp-assessment-revisions-card"><div style="font-size:12px;color:var(--text-faint)">Loading…</div></div>
+  </div>
 
   <!-- Reminder Frequency -->
   <div class="sp-section">
@@ -4708,11 +4888,15 @@ function switchView(name) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   if (name === 'controlcentre') {
     loadControlCentre();
-    if (!ccPollTimer) ccPollTimer = setInterval(loadControlCentre, 20000);
+    if (!ccPollTimer) ccPollTimer = setInterval(() => { if (document.visibilityState === 'visible') loadControlCentre(); }, 60000);
   } else if (ccPollTimer) {
     clearInterval(ccPollTimer);
     ccPollTimer = null;
   }
+  // V1.8: My Work and Work Log are lazy — fetched only when opened, never
+  // part of the core poll (see fetchAll()'s comment for the full rationale).
+  if (name === 'mywork') loadMyWork();
+  if (name === 'log') loadWorkLog();
 }
 
 // ── DIRECTOR CONTROL CENTRE (V1.6) ──────────────────────────────────
@@ -4862,6 +5046,8 @@ function renderControlCentre() {
     ccCardHtml(ap.insured_consent_pending.length, 'Insured Consent Pending', 'purple', ccSelectHandlerFor('Insured Consent Pending', ap.insured_consent_pending)),
     ccCardHtml(ap.decision_required.length, 'Decision Required', 'amber', ccSelectHandlerFor('Decision Required', ap.decision_required)),
     ccCardHtml(cc.billing.bill_pending.length + cc.billing.payment_pending.length + cc.billing.partially_settled.length, 'Billing / Payment Pending', 'amber', ccSelectHandlerFor('Billing / Payment Pending', [...cc.billing.bill_pending, ...cc.billing.payment_pending, ...cc.billing.partially_settled])),
+    ccCardHtml((ap.assessment_revision_limit_reached || []).length, 'Assessment Revision Limit Reached', 'red', ccSelectHandlerFor('Assessment Revision Limit Reached', ap.assessment_revision_limit_reached || [])),
+    ccCardHtml((ap.assessment_rejected || []).length, 'Assessment Rejected by Insurer', 'red', ccSelectHandlerFor('Assessment Rejected by Insurer', ap.assessment_rejected || [])),
   ];
   document.getElementById('ccApprovalCards').innerHTML = approvalCards.join('');
 
@@ -5351,12 +5537,11 @@ async function quickSetTaskStatus(taskId, status) {
   }
 }
 
-// ── Tasks page (My Tasks / All Tasks / Live Team) ──
+// ── Tasks page (My Tasks / All Tasks) ──
 function setTaskViewMode(mode) {
   taskViewMode = mode;
   document.getElementById('taskModeMyBtn').classList.toggle('active', mode === 'my');
   document.getElementById('taskModeAllBtn').classList.toggle('active', mode === 'all');
-  document.getElementById('taskModeLiveBtn').classList.toggle('active', mode === 'live');
   document.getElementById('taskFilters').hidden = mode !== 'all';
   document.getElementById('taskShowCompletedWrap').hidden = mode !== 'my';
   document.getElementById('dailySummaryBar').hidden = mode !== 'my';
@@ -5413,27 +5598,19 @@ function taskCardHtml(t) {
     </div>`;
 }
 
-// ── Live-work indicators + quick actions on a task card (V1.3) ──
-// "WORKING NOW" for the current user's own active task (ticking, driven by
-// a shared 1s interval — see startTaskCardTimers()); a static "{name}
-// working" note when someone else is actively timing a task visible to
-// the current user (refreshed every poll cycle, not ticked client-side,
-// to keep this compact per spec); neutral, non-judgmental wording
-// everywhere else — this is task-work tracking, not attendance/idle
+// ── Work indicators + Start/Stop actions on a task card (V1.8: lean) ──
+// A static "Started at HH:MM" — no per-second ticking, no continuous
+// polling to keep it current (spec Part A/B/Q). Neutral, non-judgmental
+// wording everywhere — this is task-work tracking, not attendance/idle
 // surveillance.
 function taskLiveIndicatorHtml(t) {
   const mine = myActiveSession();
   if (mine && mine.task_id === t.id) {
-    return `<div class="task-live-row working"><span class="task-live-badge">WORKING NOW</span> <span class="task-live-timer" data-started="${mine.started_at}">00:00:00</span></div>`;
-  }
-  const others = liveWork.filter(s => s.task_id === t.id && s.staff_id !== currentUser);
-  if (others.length > 0) {
-    const names = others.map(s => teamMember(s.staff_id)?.name || s.staff_id);
-    const suffix = others.length === 1 ? ` · ${Math.max(0, Math.round((Date.now() - others[0].started_at) / 60000))} min` : '';
-    return `<div class="task-live-row other">${esc(names.join(', '))} working${suffix}</div>`;
+    const startedLabel = new Date(mine.started_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    return `<div class="task-live-row working"><span class="task-live-badge">WORKING NOW</span> Started at ${esc(startedLabel)}</div>`;
   }
   if (t.status === 'in_progress') {
-    return `<div class="task-live-row idle">In Progress · Not currently active</div>`;
+    return `<div class="task-live-row idle">In Progress · No active tracked session</div>`;
   }
   return '';
 }
@@ -5445,14 +5622,10 @@ function taskActionButtonsHtml(t) {
   const isMine = mine && mine.task_id === t.id;
   let btns;
   if (isMine) {
-    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickPauseTask('${t.id}')">Pause</button>
+    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickPauseTask('${t.id}')">Stop Work</button>
             <button type="button" class="btn-secondary" onclick="event.stopPropagation();quickCompleteTask('${t.id}')">Complete</button>`;
-  } else if (t.status === 'not_started') {
+  } else if (t.status === 'not_started' || t.status === 'in_progress' || t.status === 'waiting') {
     btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickStartTask('${t.id}')">Start Work</button>`;
-  } else if (t.status === 'in_progress') {
-    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickStartTask('${t.id}')">Resume</button>`;
-  } else if (t.status === 'waiting') {
-    btns = `<button type="button" class="btn-secondary" onclick="event.stopPropagation();quickStartTask('${t.id}')">Resume Work</button>`;
   } else {
     return '';
   }
@@ -5462,11 +5635,6 @@ function taskActionButtonsHtml(t) {
 function renderTasksView() {
   const container = document.getElementById('taskListContainer');
   if (!container) return; // not yet in DOM (shouldn't happen, but stay safe on early renderAll() calls)
-
-  if (taskViewMode === 'live') {
-    renderLiveTeamView(container);
-    return;
-  }
 
   buildTaskFilterDropdowns();
   if (taskViewMode === 'my') renderDailySummary();
@@ -5549,7 +5717,8 @@ function renderTaskDashWidget() {
 // not attendance: wording always says "No active tracked task", never
 // "Idle".
 function myActiveSession() {
-  return liveWork.find(s => s.staff_id === currentUser) || null;
+  if (!currentWorkSession) return null;
+  return { ...currentWorkSession.session, task: currentWorkSession.task };
 }
 function formatDurationSeconds(seconds) {
   if (seconds === null || seconds === undefined) return '—';
@@ -5568,62 +5737,13 @@ function formatHHMMSS(seconds) {
   return [h, m, s].map(n => String(n).padStart(2, '0')).join(':');
 }
 
-// ── Active Work Bar (persists across every view — see its HTML's own
-// comment for why) ──
-function renderActiveWorkBar() {
-  const bar = document.getElementById('activeWorkBar');
-  if (!bar) return;
-  const mine = myActiveSession();
-  if (!mine || !mine.task) { bar.hidden = true; stopAwbTimer(); return; }
-  bar.hidden = false;
-  const job = mine.task.job_id ? jobs.find(j => j.id === mine.task.job_id) : null;
-  document.getElementById('awb-title').textContent = mine.task.title + (job ? ` — ${job.id} ${job.title}` : '');
-  startAwbTimer(mine.started_at);
-}
-function startAwbTimer(startedAt) {
-  stopAwbTimer();
-  const tick = () => {
-    const el = document.getElementById('awb-timer');
-    if (el) el.textContent = formatHHMMSS((Date.now() - startedAt) / 1000);
-  };
-  tick();
-  awbTimerInterval = setInterval(tick, 1000);
-}
-function stopAwbTimer() {
-  if (awbTimerInterval) { clearInterval(awbTimerInterval); awbTimerInterval = null; }
-}
-// One persistent 1s ticker (started once at login) rather than restarting
-// an interval on every render — it just re-queries whichever
-// .task-live-timer badges are currently in the DOM (My Tasks/All Tasks
-// task cards showing the CURRENT user's own "WORKING NOW" badge; other
-// staff's badges and Live Team intentionally refresh only on the ~5s poll
-// to keep this compact, per spec).
-function startTaskCardTimers() {
-  stopTaskCardTimers();
-  taskCardTimerInterval = setInterval(() => {
-    document.querySelectorAll('.task-live-timer[data-started]').forEach(el => {
-      el.textContent = formatHHMMSS((Date.now() - Number(el.dataset.started)) / 1000);
-    });
-  }, 1000);
-}
-function stopTaskCardTimers() {
-  if (taskCardTimerInterval) { clearInterval(taskCardTimerInterval); taskCardTimerInterval = null; }
-}
-function pauseCurrentWork() {
-  const mine = myActiveSession();
-  if (mine) quickPauseTask(mine.task_id);
-}
-function openCurrentWorkTask() {
-  const mine = myActiveSession();
-  if (mine) openTaskDetail(mine.task_id);
-}
-
-// ── Quick work actions (task cards, Active Work Bar, Task Detail) ──
+// ── Quick work actions (task cards, Task Detail) — V1.8: Start/Stop
+// only, no Working Now bar, no per-second ticking (spec Part A/B/Q). ──
 async function quickStartTask(taskId) {
   const mine = myActiveSession();
   if (mine && mine.task_id !== taskId) {
     const otherTitle = mine.task ? mine.task.title : 'another task';
-    if (!confirm(`You are currently working on "${otherTitle}". Starting this task will pause it automatically. Continue?`)) return;
+    if (!confirm(`You already have an active work session on "${otherTitle}".\nStop the existing session and start this task?`)) return;
   }
   try {
     await apiPost('/api/tasks/' + encodeURIComponent(taskId) + '/start', {});
@@ -5648,42 +5768,6 @@ async function quickCompleteTask(taskId) {
   } catch(e) {
     alert('Error completing task: ' + e.message);
   }
-}
-
-// ── Live Team ──
-function renderLiveTeamView(container) {
-  if (liveWork.length === 0) {
-    container.innerHTML = '<div class="task-empty">No one has an active tracked task right now.</div>';
-    return;
-  }
-  const rows = [...liveWork].sort((a, b) => a.started_at - b.started_at).map(s => {
-    const staff = teamMember(s.staff_id);
-    const t = s.task;
-    const job = t && t.job_id ? jobs.find(j => j.id === t.job_id) : null;
-    const elapsedSeconds = (Date.now() - s.started_at) / 1000;
-    const startedLabel = new Date(s.started_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-    const longRunning = elapsedSeconds > 8 * 3600;
-    return `
-      <div class="live-team-row" onclick="${t ? `openTaskDetail('${t.id}')` : ''}">
-        <div class="live-team-staff">
-          ${staff ? `<div class="avatar" style="background:${staff.color}">${staff.initials}</div>` : ''}
-          <div>
-            <div style="font-weight:600;font-size:12.5px">${esc(staff ? staff.name : s.staff_id)}</div>
-            <div style="font-size:10.5px;color:var(--text-faint)">${esc(staff ? staff.role : '')}</div>
-          </div>
-        </div>
-        <div class="live-team-task">
-          <div style="font-weight:500">${t ? esc(t.title) : '(task not found)'}</div>
-          <div style="color:var(--text-faint)">${job ? `${job.id} · ${esc(job.title)}` : (t && t.job_id ? '' : 'General Office Task')}${t ? ' · ' + esc(taskTypeLabel(t.task_type)) : ''}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="live-team-timer">${formatHHMMSS(elapsedSeconds)}</div>
-          <div style="font-size:10.5px;color:var(--text-faint)">Started ${startedLabel}${t && t.expected_minutes ? ` · Expected ${formatTaskDuration(t.expected_minutes)}` : ''}</div>
-          ${longRunning ? '<div class="live-team-long">Long-running session</div>' : ''}
-        </div>
-      </div>`;
-  }).join('');
-  container.innerHTML = `<div class="live-team-list">${rows}</div>`;
 }
 
 // ── Daily Work Summary (My Tasks header) ──
@@ -5719,87 +5803,28 @@ function viewJobTasks(jobId) {
 // here re-derives a score. "I Have Time" is pure client UI state
 // (sessionStorage — clears when the tab closes, never written to D1) that
 // just changes which /api/my-work query the poll cycle requests.
-const REASON_CODE_TEXT = {
-  overdue: r => `Overdue ${r.days} day${r.days === 1 ? '' : 's'}`,
-  due_today: () => 'Due Today',
-  due_tomorrow: () => 'Due Tomorrow',
-  due_soon: r => `Due in ${r.days} days`,
-  due_within_hour: () => 'Due within the hour',
-  due_within_3h: () => 'Due in a few hours',
-  due_later_today: () => 'Due later today',
-  urgent: () => 'Urgent Priority',
-  high_priority: () => 'High Priority',
-  old_task: r => `Pending ${r.days} days`,
-  quick_task_old: () => 'Quick Task',
-  previously_started: () => 'In Progress',
-  fits_time: () => 'Fits Your Time',
-  quick_win: () => 'Quick Win',
-  pinned_next: () => 'Pinned as Do Next',
-  needs_more_time: () => 'Needs more time than available',
-  someone_else_working: r => `${r.names.join(', ')} ${r.names.length === 1 ? 'is' : 'are'} currently working on this`,
-};
-function reasonsToText(reasons, max) {
-  return (reasons || []).slice(0, max || 3)
-    .map(r => (REASON_CODE_TEXT[r.code] ? REASON_CODE_TEXT[r.code](r) : null))
-    .filter(Boolean).join(' · ');
-}
+// ── MY WORK (simplified, V1.8) — no scoring/ranking/pin/available-time.
+// Lazy-loaded: fetched only when this view opens or on manual refresh,
+// not part of the core fetchAll() poll.
+let mwCompletedShown = false;
 
-function restoreAvailableMinutesFilter() {
-  try {
-    const v = sessionStorage.getItem('tms_available_minutes');
-    availableMinutesFilter = v ? Number(v) : null;
-  } catch(e) { availableMinutesFilter = null; }
-}
-async function setAvailableMinutes(mins) {
-  availableMinutesFilter = mins;
-  try {
-    if (mins) sessionStorage.setItem('tms_available_minutes', String(mins));
-    else sessionStorage.removeItem('tms_available_minutes');
-  } catch(e) {}
-  await loadMyWork();
-  renderMyWorkView();
-}
 async function loadMyWork() {
   try {
-    const qs = availableMinutesFilter ? ('?available_minutes=' + availableMinutesFilter) : '';
-    myWork = await apiGet('/api/my-work' + qs);
+    myWork = await apiGet('/api/my-work');
   } catch(e) {
     myWork = null;
   }
-}
-
-async function pinDoNext(taskId) {
-  try {
-    await apiPut('/api/my-work/pin', { task_id: taskId });
-    await loadMyWork();
-    renderMyWorkView();
-  } catch(e) {
-    alert('Error pinning task: ' + e.message);
-  }
-}
-async function unpinDoNext() {
-  try {
-    await apiPut('/api/my-work/pin', { task_id: null });
-    await loadMyWork();
-    renderMyWorkView();
-  } catch(e) {
-    alert('Error clearing pin: ' + e.message);
-  }
-}
-function toggleLaterExpanded() {
-  laterExpanded = !laterExpanded;
-  renderLaterSection();
+  renderMyWorkView();
+  renderMyWorkDashWidget();
 }
 
 function renderMyWorkDashWidget() {
   const el = document.getElementById('myworkDashBody');
   if (!el || !currentUser) return;
-  if (!myWork) { el.innerHTML = '<div style="color:var(--text-faint)">Loading…</div>'; return; }
+  if (!myWork) { el.innerHTML = '<div style="color:var(--text-faint)">Open My Work to load…</div>'; return; }
   const parts = [];
   if (myWork.current) parts.push(`<div><strong>Working Now:</strong> ${esc(myWork.current.task.title)}</div>`);
-  else if (myWork.recommended_now) parts.push(`<div><strong>Recommended:</strong> ${esc(myWork.recommended_now.task.title)}</div>`);
-  else parts.push('<div style="color:var(--text-faint)">No actionable tasks right now</div>');
-  if (myWork.next && myWork.next.length > 0) parts.push(`<div><strong>Next:</strong> ${esc(myWork.next[0].task.title)}</div>`);
+  else parts.push('<div style="color:var(--text-faint)">No active tracked task</div>');
   parts.push(`<div style="color:${myWork.summary.overdue > 0 ? 'var(--red)' : 'var(--text-faint)'}"><strong>Overdue:</strong> ${myWork.summary.overdue}</div>`);
   el.innerHTML = parts.join('');
 }
@@ -5807,12 +5832,10 @@ function renderMyWorkDashWidget() {
 function renderMyWorkView() {
   if (!document.getElementById('view-mywork')) return;
   renderMyWorkSummary();
-  renderIHaveTimeButtons();
   renderNowCard();
-  renderNextSection();
-  renderLaterSection();
-  renderWaitingBlockedSection();
-  renderClosedClaimSection();
+  renderWorkflowActionsSection();
+  ['overdue', 'due_today', 'upcoming', 'no_due_date', 'waiting'].forEach(renderMwTaskSection);
+  renderMwCompletedSection();
 }
 
 function renderMyWorkSummary() {
@@ -5828,150 +5851,84 @@ function renderMyWorkSummary() {
     <div><strong>${formatDurationSeconds(s.tracked_today_seconds)}</strong>Tracked Today</div>`;
 }
 
-function renderIHaveTimeButtons() {
-  document.querySelectorAll('.ihavetime-btn:not(.clear)').forEach(b => {
-    b.classList.toggle('active', Number(b.dataset.min) === availableMinutesFilter);
-  });
-  const clearBtn = document.getElementById('ihaveTimeClear');
-  if (clearBtn) clearBtn.hidden = !availableMinutesFilter;
-}
-
 function renderNowCard() {
   const card = document.getElementById('mw-now-card');
   if (!card) return;
   if (!myWork) { card.innerHTML = '<div class="task-empty">Loading…</div>'; return; }
-
-  if (myWork.current) {
-    const c = myWork.current, t = c.task;
-    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
-    card.innerHTML = `
-      <div class="mw-now-label working">WORKING NOW</div>
-      <div class="mw-now-title">${esc(t.title)}</div>
-      <div class="mw-now-meta">${job ? `${job.id} · ${esc(job.title)}` : 'General Office Task'}</div>
-      <div class="mw-now-timer task-live-timer" data-started="${c.session.started_at}">00:00:00</div>
-      <div class="mw-now-sub">Expected ${t.expected_minutes ? formatTaskDuration(t.expected_minutes) : '—'} · Total Actual ${formatDurationSeconds(c.total_actual_seconds)}</div>
-      <div class="mw-now-actions">
-        <button type="button" class="btn-primary" onclick="quickPauseTask('${t.id}')">Pause</button>
-        <button type="button" class="btn-primary" onclick="quickCompleteTask('${t.id}')">Complete</button>
-        <button type="button" class="btn-secondary" onclick="openTaskDetail('${t.id}')">Open</button>
-      </div>`;
-  } else if (myWork.recommended_now) {
-    const r = myWork.recommended_now, t = r.task;
-    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
-    const isPinned = myWork.pinned_task_id === t.id;
-    card.innerHTML = `
-      <div class="mw-now-label recommended">RECOMMENDED NOW</div>
-      <div class="mw-now-title">${esc(t.title)}</div>
-      <div class="mw-now-meta">${job ? `${job.id} · ${esc(job.title)}` : 'General Office Task'}</div>
-      <div class="mw-now-reason">${esc(reasonsToText(r.reasons))}</div>
-      <div class="mw-now-actions">
-        <button type="button" class="btn-primary" onclick="quickStartTask('${t.id}')">Start Work</button>
-        ${isPinned
-          ? `<button type="button" class="btn-secondary" onclick="unpinDoNext()">Unpin</button>`
-          : `<button type="button" class="btn-secondary" onclick="pinDoNext('${t.id}')">Do Next</button>`}
-        <button type="button" class="btn-secondary" onclick="openTaskDetail('${t.id}')">Open</button>
-      </div>`;
-  } else {
-    card.innerHTML = '<div class="mw-now-label recommended">NOW</div><div style="padding:8px 0;color:rgba(255,255,255,.8)">No actionable tasks right now — nice work.</div>';
+  if (!myWork.current) {
+    card.innerHTML = '<div class="mw-now-label recommended">NOW</div><div style="padding:8px 0;color:rgba(255,255,255,.8)">No active tracked task.</div>';
+    return;
   }
-}
-
-function myWorkItemCardHtml(r, rank) {
-  const t = r.task;
+  const c = myWork.current, t = c.task;
   const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
-  const isPinned = myWork && myWork.pinned_task_id === t.id;
-  return `
-    <div class="mw-item-card" onclick="openTaskDetail('${t.id}')">
-      <div class="mw-item-rank">${rank}</div>
-      <div class="mw-item-body">
-        <div class="mw-item-title">${esc(t.title)}${isPinned ? ' 📌' : ''}</div>
-        <div class="mw-item-meta">${job ? `${job.id} · ${esc(job.title)}` : 'General Office Task'} · ${esc(taskTypeLabel(t.task_type))}${t.expected_minutes ? ' · ' + esc(formatTaskDuration(t.expected_minutes)) : ''}</div>
-        <div class="mw-item-reason">${esc(reasonsToText(r.reasons))}</div>
-      </div>
-      <div class="mw-item-actions" onclick="event.stopPropagation()">
-        <button type="button" class="btn-secondary" onclick="quickStartTask('${t.id}')">Start Work</button>
-      </div>
+  const startedLabel = new Date(c.session.started_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  card.innerHTML = `
+    <div class="mw-now-label working">WORKING NOW</div>
+    <div class="mw-now-title">${esc(t.title)}</div>
+    <div class="mw-now-meta">${job ? `${job.id} · ${esc(job.title)}` : 'General Office Task'}</div>
+    <div class="mw-now-sub">Started at ${esc(startedLabel)} · Expected ${t.expected_minutes ? formatTaskDuration(t.expected_minutes) : '—'} · Total Actual ${formatDurationSeconds(c.total_actual_seconds)}</div>
+    <div class="mw-now-actions">
+      <button type="button" class="btn-primary" onclick="quickPauseTask('${t.id}')">Stop Work</button>
+      <button type="button" class="btn-primary" onclick="quickCompleteTask('${t.id}')">Complete</button>
+      <button type="button" class="btn-secondary" onclick="openTaskDetail('${t.id}')">Open</button>
     </div>`;
 }
 
-function renderNextSection() {
-  const el = document.getElementById('mw-next-list');
+// "Workflow Actions" — derived claim next-actions for claims this user is
+// responsible for (director/surveyor/backstaff). No task DB row required —
+// purely advisory, reusing the same analysis Job Detail/Dashboard/Control
+// Centre already show (spec Part J: never duplicate workflow logic).
+function renderWorkflowActionsSection() {
+  const el = document.getElementById('mw-workflow-actions');
   if (!el) return;
-  const items = (myWork && myWork.next) || [];
+  const items = (myWork && myWork.workflow_actions) || [];
   el.innerHTML = items.length === 0
-    ? '<div class="task-empty">Nothing else queued.</div>'
-    : items.map((r, i) => myWorkItemCardHtml(r, i + 1)).join('');
+    ? '<div class="task-empty">No claim workflow actions for you right now.</div>'
+    : items.map(r => `
+      <div class="mw-wb-row health-${esc(r.health)}" onclick="openJob('${r.job_id}')">
+        <div class="mw-wb-title">${esc(r.job_id)} — ${esc(r.insured || r.title || '')}</div>
+        <div class="mw-wb-detail">${esc(r.current_step_label)} — ${esc(r.next_action.label)}${r.reason ? ' · ' + esc(r.reason) : ''}</div>
+      </div>`).join('');
 }
 
-function mwCompactRowHtml(r) {
-  const t = r.task;
+const MW_SECTION_EMPTY_TEXT = {
+  overdue: 'No overdue tasks.', due_today: 'Nothing due today.', upcoming: 'Nothing upcoming.',
+  no_due_date: 'Nothing without a due date.', waiting: 'Nothing waiting.',
+};
+const MW_SECTION_EL_ID = {
+  overdue: 'mw-overdue-list', due_today: 'mw-today-list', upcoming: 'mw-upcoming-list',
+  no_due_date: 'mw-noduedate-list', waiting: 'mw-waiting-list',
+};
+function mwPriorityLabel(p) { return p ? p.charAt(0).toUpperCase() + p.slice(1) : ''; }
+function mwTaskRowHtml(t) {
   const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
   const due = taskDueLabel(t);
   return `<div class="mw-compact-row" onclick="openTaskDetail('${t.id}')">
-    <span class="mw-compact-title">${esc(t.title)}</span>
-    <span class="mw-compact-meta">${job ? esc(job.id) : 'Office'}${due ? ' · ' + esc(due) : ''}${t.expected_minutes ? ' · ' + esc(formatTaskDuration(t.expected_minutes)) : ''}</span>
+    <span class="mw-compact-title">${esc(t.title)} <span class="req-mandatory-tag">${esc(mwPriorityLabel(t.priority))}</span></span>
+    <span class="mw-compact-meta">${job ? esc(job.id) : 'Office'}${due ? ' · ' + esc(due) : ''}${t.status === 'waiting' ? ' · ' + esc(t.waiting_reason || 'Waiting') : ''}${t.expected_minutes ? ' · ' + esc(formatTaskDuration(t.expected_minutes)) : ''}</span>
   </div>`;
 }
-function renderLaterSection() {
-  const el = document.getElementById('mw-later-list');
-  const toggle = document.getElementById('mw-later-toggle');
+function renderMwTaskSection(key) {
+  const el = document.getElementById(MW_SECTION_EL_ID[key]);
   if (!el) return;
-  const items = (myWork && myWork.later) || [];
-  if (items.length === 0) {
-    el.innerHTML = '<div class="task-empty">Nothing else.</div>';
-    if (toggle) toggle.hidden = true;
-    return;
-  }
-  const shown = laterExpanded ? items : items.slice(0, 5);
-  el.innerHTML = shown.map(mwCompactRowHtml).join('');
-  if (toggle) {
-    toggle.hidden = items.length <= 5;
-    toggle.textContent = laterExpanded ? 'Show less' : `Show all (${items.length})`;
-  }
+  const items = (myWork && myWork[key]) || [];
+  el.innerHTML = items.length === 0
+    ? `<div class="task-empty">${MW_SECTION_EMPTY_TEXT[key]}</div>`
+    : items.map(mwTaskRowHtml).join('');
 }
-
-function renderWaitingBlockedSection() {
-  const el = document.getElementById('mw-waiting-blocked');
+function toggleMwCompleted() {
+  mwCompletedShown = !mwCompletedShown;
+  renderMwCompletedSection();
+}
+function renderMwCompletedSection() {
+  const el = document.getElementById('mw-completed-list');
+  const toggle = document.getElementById('mw-completed-toggle');
   if (!el) return;
-  const waitingItems = (myWork && myWork.waiting) || [];
-  const blockedItems = (myWork && myWork.blocked) || [];
-  if (waitingItems.length === 0 && blockedItems.length === 0) {
-    el.innerHTML = '<div class="task-empty">Nothing waiting or blocked.</div>';
-    return;
-  }
-  const waitingHtml = waitingItems.map(w => {
-    const t = w.task;
-    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
-    const since = w.waiting_since ? new Date(w.waiting_since).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : null;
-    return `<div class="mw-wb-row" onclick="openTaskDetail('${t.id}')">
-      <div class="mw-wb-title">${esc(t.title)} ${job ? `<span class="log-job-link" onclick="event.stopPropagation();openJob('${job.id}')">${job.id}</span>` : ''}</div>
-      <div class="mw-wb-detail">${esc(t.waiting_reason || 'Waiting')}${since ? ` · Waiting since ${since}` : ''}</div>
-    </div>`;
-  }).join('');
-  const blockedHtml = blockedItems.map(b => {
-    const t = b.task;
-    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
-    return `<div class="mw-wb-row" onclick="openTaskDetail('${t.id}')">
-      <div class="mw-wb-title">${esc(t.title)} ${job ? `<span class="log-job-link" onclick="event.stopPropagation();openJob('${job.id}')">${job.id}</span>` : ''}</div>
-      <div class="mw-wb-detail">Blocked by: ${b.blocker ? esc(b.blocker.title) : '—'}</div>
-    </div>`;
-  }).join('');
-  el.innerHTML = waitingHtml + blockedHtml;
-}
-
-function renderClosedClaimSection() {
-  const wrap = document.getElementById('mw-closed-claim-wrap');
-  if (!wrap) return;
-  const items = (myWork && myWork.closed_claim_exceptional) || [];
-  if (items.length === 0) { wrap.hidden = true; return; }
-  wrap.hidden = false;
-  document.getElementById('mw-closed-claim-list').innerHTML = items.map(t => {
-    const job = t.job_id ? jobs.find(j => j.id === t.job_id) : null;
-    return `<div class="mw-wb-row" onclick="openTaskDetail('${t.id}')">
-      <div class="mw-wb-title">${esc(t.title)} ${job ? `<span class="log-job-link" onclick="event.stopPropagation();openJob('${job.id}')">${job.id}</span>` : ''}</div>
-      <div class="mw-wb-detail">Linked claim is closed</div>
-    </div>`;
-  }).join('');
+  el.hidden = !mwCompletedShown;
+  if (toggle) toggle.textContent = mwCompletedShown ? 'Hide' : 'Show';
+  if (!mwCompletedShown) return;
+  const items = ((myWork && myWork.completed) || []).slice(0, 20);
+  el.innerHTML = items.length === 0 ? '<div class="task-empty">Nothing completed recently.</div>' : items.map(mwTaskRowHtml).join('');
 }
 
 // ── HELPERS ───────────────────────────────────────────────────

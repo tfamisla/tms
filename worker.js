@@ -1203,6 +1203,128 @@ async function closeJob(db, jobId, body, user) {
   return rowToJob(updated);
 }
 
+// ── ASSESSMENT REVISION CYCLES (V1.8) ───────────────────────────────
+// The ORIGINAL assessment continues to live entirely on `jobs` (V0.9
+// fields: assessment_status/assessed_amount/director_verification_*/
+// insurer_approval_*), completely untouched by this module. This table
+// only ever holds INSURER-DRIVEN revisions (R1/R2/R3), created lazily —
+// most claims will never have a row here. Never overwrites a prior
+// revision's own row; every cycle stays independently visible forever.
+const ASSESSMENT_REVISION_MAX = 3;
+const ASSESSMENT_DIRECTOR_STATUSES = ['pending', 'approved', 'returned'];
+const ASSESSMENT_INSURER_STATUSES = ['pending', 'approved', 'revision_required', 'rejected'];
+
+async function listAssessmentRevisions(db, jobId) {
+  const { results } = await db.prepare('SELECT * FROM assessment_revisions WHERE job_id = ? ORDER BY revision_no ASC').bind(jobId).all();
+  return results;
+}
+
+// Records that the insurer has asked for a revision of the ORIGINAL
+// assessment — the one explicit action that creates Revision 1. Only
+// valid once the original has been Director-approved (mirrors the normal
+// sequential flow: Director Verification always precedes Insurer
+// Approval, for the original exactly as for every later revision).
+async function requestAssessmentRevision(db, jobId, body, user) {
+  const job = await db.prepare('SELECT * FROM jobs WHERE id = ?').bind(jobId).first();
+  if (!job) throw new Error('job not found');
+  const existing = await listAssessmentRevisions(db, jobId);
+  if (existing.length > 0) throw new Error('A revision cycle is already active for this claim — record the insurer decision on the latest revision instead');
+  if (job.director_verification_status !== 'approved') throw new Error('The original assessment must be Director-approved before a revision can be requested');
+  const reason = (body.insurer_revision_reason || '').trim();
+  if (!reason) throw new Error('Insurer Revision Reason is required');
+
+  const now = Date.now();
+  const id = `AR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  await db.prepare(`
+    INSERT INTO assessment_revisions (id, job_id, revision_no, director_status, insurer_status, insurer_revision_reason, insurer_decision_date, created_by, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).bind(id, jobId, 1, 'pending', 'pending', reason, todayIST(), user.id, now, now).run();
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} recorded an insurer revision request on the original assessment — Revision 1 created. Reason: ${reason}`, ts: now, actor: user.id,
+  }]);
+  return db.prepare('SELECT * FROM assessment_revisions WHERE id = ?').bind(id).first();
+}
+
+async function updateAssessmentRevisionPreparation(db, jobId, revisionId, body, user) {
+  const rev = await db.prepare('SELECT * FROM assessment_revisions WHERE id = ? AND job_id = ?').bind(revisionId, jobId).first();
+  if (!rev) throw new Error('assessment revision not found');
+  const assessmentDate = body.assessment_date !== undefined ? String(body.assessment_date).trim() : rev.assessment_date;
+  if (assessmentDate && !EVENT_DATE_RE.test(assessmentDate)) throw new Error('Assessment Date must be YYYY-MM-DD');
+  const assessedAmount = body.assessed_amount !== undefined ? String(body.assessed_amount).trim() : rev.assessed_amount;
+  if (assessedAmount && !isNonNegativeNumber(assessedAmount)) throw new Error('Assessed Amount must be a valid non-negative number');
+  const preparedBy = body.prepared_by_staff_id !== undefined ? String(body.prepared_by_staff_id).trim() : rev.prepared_by_staff_id;
+
+  const now = Date.now();
+  await db.prepare('UPDATE assessment_revisions SET assessment_date=?, assessed_amount=?, prepared_by_staff_id=?, updated_at=? WHERE id=?')
+    .bind(assessmentDate, assessedAmount, preparedBy, now, revisionId).run();
+  await appendJobActivity(db, jobId, [{ text: `${user.id} updated Revision ${rev.revision_no} assessment preparation.`, ts: now, actor: user.id }]);
+  return db.prepare('SELECT * FROM assessment_revisions WHERE id = ?').bind(revisionId).first();
+}
+
+// Director-role (or Admin) only, validated server-side — client-side
+// hiding is never sufficient for authorization (spec Part S).
+async function updateAssessmentRevisionDirector(db, jobId, revisionId, body, user) {
+  if (!isDirectorRole(user) && !isAdmin(user)) throw new Error('Only a Director (or Admin) may record Director verification');
+  const rev = await db.prepare('SELECT * FROM assessment_revisions WHERE id = ? AND job_id = ?').bind(revisionId, jobId).first();
+  if (!rev) throw new Error('assessment revision not found');
+  if (!ASSESSMENT_DIRECTOR_STATUSES.includes(body.director_status)) throw new Error('Invalid director status');
+  if (body.director_status === 'approved' && !rev.assessed_amount) throw new Error('Assessment must be prepared (amount entered) before Director verification');
+  let returnReason = '';
+  if (body.director_status === 'returned') {
+    returnReason = (body.director_return_reason || '').trim();
+    if (!returnReason) throw new Error('Return Reason is required');
+  }
+
+  const now = Date.now();
+  await db.prepare('UPDATE assessment_revisions SET director_status=?, director_verified_at=?, director_verified_by=?, director_return_reason=?, updated_at=? WHERE id=?')
+    .bind(body.director_status, now, user.id, returnReason, now, revisionId).run();
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} ${body.director_status === 'approved' ? 'approved' : 'returned'} Revision ${rev.revision_no}${returnReason ? ' — ' + returnReason : ''}.`,
+    ts: now, actor: user.id,
+  }]);
+  return db.prepare('SELECT * FROM assessment_revisions WHERE id = ?').bind(revisionId).first();
+}
+
+// Recording the insurer's decision as 'revision_required' is itself the
+// direct, deterministic trigger that activates the next revision (spec
+// Part G) — not a separate manual step. Capped at ASSESSMENT_REVISION_MAX;
+// a 4th revision is never created, matching "Assessment Revision Limit
+// Reached" becoming the terminal state instead (see analyzeJobWorkflow).
+async function updateAssessmentRevisionInsurer(db, jobId, revisionId, body, user) {
+  const rev = await db.prepare('SELECT * FROM assessment_revisions WHERE id = ? AND job_id = ?').bind(revisionId, jobId).first();
+  if (!rev) throw new Error('assessment revision not found');
+  if (rev.director_status !== 'approved') throw new Error('Director must approve this revision before recording an insurer decision');
+  if (!ASSESSMENT_INSURER_STATUSES.includes(body.insurer_status)) throw new Error('Invalid insurer status');
+  const decisionDate = (body.insurer_decision_date || todayIST()).trim();
+  if (!EVENT_DATE_RE.test(decisionDate)) throw new Error('Insurer Decision Date must be YYYY-MM-DD');
+  let revisionReason = '';
+  if (body.insurer_status === 'revision_required') {
+    revisionReason = (body.insurer_revision_reason || '').trim();
+    if (!revisionReason) throw new Error('Insurer Revision Reason is required');
+  }
+
+  const now = Date.now();
+  await db.prepare('UPDATE assessment_revisions SET insurer_status=?, insurer_decision_date=?, insurer_revision_reason=?, updated_at=? WHERE id=?')
+    .bind(body.insurer_status, decisionDate, revisionReason, now, revisionId).run();
+  await appendJobActivity(db, jobId, [{
+    text: `${user.id} recorded insurer decision on Revision ${rev.revision_no}: ${body.insurer_status}${revisionReason ? ' — ' + revisionReason : ''}.`,
+    ts: now, actor: user.id,
+  }]);
+
+  let nextRevision = null;
+  if (body.insurer_status === 'revision_required' && rev.revision_no < ASSESSMENT_REVISION_MAX) {
+    const nextNo = rev.revision_no + 1;
+    const id2 = `AR-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    await db.prepare(`
+      INSERT INTO assessment_revisions (id, job_id, revision_no, director_status, insurer_status, created_by, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?)
+    `).bind(id2, jobId, nextNo, 'pending', 'pending', user.id, now, now).run();
+    await appendJobActivity(db, jobId, [{ text: `Revision ${nextNo} activated following the insurer's decision on Revision ${rev.revision_no}.`, ts: now, actor: user.id }]);
+    nextRevision = await db.prepare('SELECT * FROM assessment_revisions WHERE id = ?').bind(id2).first();
+  }
+  return { revision: await db.prepare('SELECT * FROM assessment_revisions WHERE id = ?').bind(revisionId).first(), next_revision: nextRevision };
+}
+
 // ── TASKS (V1.2) ───────────────────────────────────────────────────
 // Normalized, independent of jobs/job_billing/milestone fields — the jobs
 // table stays frozen at 97 columns (see HANDOFF_NOTES.md). A task may
@@ -1757,247 +1879,72 @@ async function correctWorkSession(db, sessionId, body, user) {
   return db.prepare('SELECT * FROM task_work_sessions WHERE id = ?').bind(sessionId).first();
 }
 
-// ── MY WORK / NOW–NEXT–LATER (V1.4) ─────────────────────────────────
-// Deterministic, rules-based recommendation engine — no AI/LLM calls, no
-// stored score (computed fresh on every request; correctness over premature
-// optimization at TFAM's current scale). Never mutates tasks/jobs/sessions
-// — GET /api/my-work is purely read-only. Priority stays a human-entered
-// field; the recommendation score is derived intelligence layered on top,
-// never written back to `tasks`.
-const QUICK_TASK_MAX_MINUTES = 15;
-const OVERDUE_AGING_CAP = 50;
-const TASK_AGE_CAP = 30;
-// Task types legitimately expected to remain open after a claim closes
-// (closure in this system only happens after FSR submission + billing is
-// fully settled — see closeJob() — so an open task on a closed claim is
-// exceptional by default, EXCEPT for these post-closure housekeeping types).
-const POST_CLOSURE_TASK_TYPES = ['bill_entry', 'entry_updation'];
-
-function istDateOfTimestamp(ts) {
-  return new Date(ts + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
-// Timezone-agnostic whole-day index for a 'YYYY-MM-DD' string — used only
-// to diff two calendar dates (days overdue / days until due), never as a
-// real instant.
-function dayIndex(dateStr) {
-  return Math.floor(Date.parse(dateStr + 'T00:00:00Z') / 86400000);
-}
-function minutesUntil(nowTimeHHMM, dueTimeHHMM) {
-  const [nh, nm] = nowTimeHHMM.split(':').map(Number);
-  const [dh, dm] = dueTimeHHMM.split(':').map(Number);
-  return (dh * 60 + dm) - (nh * 60 + nm);
-}
-
-// Pure, deterministic, unit-testable. Never touches the database — all
-// context (now, today, pin, who-else-is-working) is precomputed by the
-// caller. Returns a score plus structured reason codes (not prose — the
-// frontend translates codes to friendly text) and whether the task fits
-// an active "I Have Time" window.
-function scoreTaskForUser(task, ctx) {
-  let score = 0;
-  const reasons = [];
-
-  const overdueDays = (task.due_date && task.due_date < ctx.todayStr)
-    ? Math.max(1, dayIndex(ctx.todayStr) - dayIndex(task.due_date))
-    : 0;
-
-  if (overdueDays > 0) {
-    score += 100 + Math.min(overdueDays * 5, OVERDUE_AGING_CAP);
-    reasons.push({ code: 'overdue', days: overdueDays });
-  } else if (task.due_date === ctx.todayStr) {
-    score += 80;
-    reasons.push({ code: 'due_today' });
-    if (task.due_time) {
-      const mins = minutesUntil(ctx.nowTimeHHMM, task.due_time);
-      if (mins >= 0) {
-        if (mins <= 60) { score += 40; reasons.push({ code: 'due_within_hour' }); }
-        else if (mins <= 180) { score += 25; reasons.push({ code: 'due_within_3h' }); }
-        else { score += 10; reasons.push({ code: 'due_later_today' }); }
-      }
-    }
-  } else if (task.due_date) {
-    const daysUntil = dayIndex(task.due_date) - dayIndex(ctx.todayStr);
-    if (daysUntil === 1) { score += 50; reasons.push({ code: 'due_tomorrow' }); }
-    else if (daysUntil >= 2 && daysUntil <= 3) { score += 30; reasons.push({ code: 'due_soon', days: daysUntil }); }
-  }
-
-  if (task.priority === 'urgent') { score += 80; reasons.push({ code: 'urgent' }); }
-  else if (task.priority === 'high') { score += 50; reasons.push({ code: 'high_priority' }); }
-  else if (task.priority === 'normal') { score += 20; }
-
-  const ageInDays = Math.max(0, Math.floor((ctx.nowMs - task.created_at) / 86400000));
-  score += Math.min(ageInDays, TASK_AGE_CAP);
-  if (ageInDays >= 7) reasons.push({ code: 'old_task', days: ageInDays });
-
-  if (task.expected_minutes && task.expected_minutes <= QUICK_TASK_MAX_MINUTES) {
-    let bonus = 0;
-    if (ageInDays >= 30) bonus = 50;
-    else if (ageInDays >= 14) bonus = 30;
-    else if (ageInDays >= 7) bonus = 15;
-    if (bonus > 0) { score += bonus; reasons.push({ code: 'quick_task_old' }); }
-  }
-
-  if (task.status === 'in_progress') {
-    score += 20;
-    reasons.push({ code: 'previously_started' });
-  }
-
-  let fitsAvailableTime = null;
-  if (ctx.availableMinutes != null) {
-    if (task.expected_minutes != null) {
-      if (task.expected_minutes <= ctx.availableMinutes) {
-        fitsAvailableTime = true;
-        score += 30;
-        if (task.expected_minutes <= ctx.availableMinutes * 0.75) score += 10;
-        reasons.push({ code: 'fits_time' });
-        if (task.expected_minutes <= QUICK_TASK_MAX_MINUTES) reasons.push({ code: 'quick_win' });
-      } else {
-        fitsAvailableTime = false;
-      }
-    }
-  }
-
-  if (ctx.pinnedTaskId && task.id === ctx.pinnedTaskId) {
-    score += 500;
-    reasons.push({ code: 'pinned_next' });
-  }
-
-  const others = (ctx.othersWorkingByTask && ctx.othersWorkingByTask[task.id]) || [];
-  if (others.length > 0) {
-    if (task.priority !== 'urgent' && overdueDays === 0) score -= 10;
-    reasons.push({ code: 'someone_else_working', names: others });
-  }
-
-  return { score, reasons, fitsAvailableTime, ageInDays, overdueDays };
-}
-
+// ── MY WORK (simplified, V1.8) ──────────────────────────────────────
+// Plain operational grouping — NO scoring, NO ranking, NO "best task for
+// available time", NO Do Next pin. Two sections only, per spec: Workflow
+// Actions (derived from claim milestones, via the same analyzeJobWorkflow()
+// every other screen already uses — no duplicate workflow logic) and
+// Assigned Tasks, grouped Overdue/Today/Upcoming/No Due Date/Waiting/
+// Completed, sorted by priority then due date ascending. Fully read-only.
+// `task_personal_preferences` is no longer read or written here (the
+// table itself is left in place — historical data, not dropped).
+//
+// Priority rank + due-date sort key are shared with Director Control
+// Centre's overdue-tasks list (buildTasksBlock) — defined once here, not
+// duplicated.
 const TASK_TIE_PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
 function dueSortKey(t) {
   if (!t.due_date) return '9999-99-99 99:99';
   return `${t.due_date} ${t.due_time || '99:99'}`;
 }
-// Deterministic tie-breakers, applied only when scores are equal: earlier
-// due date/time, then higher manual priority, then older created_at, then
-// smaller expected_minutes, then stable task id — never a random/unstable
-// ordering across identical requests.
-function compareScored(a, b) {
-  if (b.score !== a.score) return b.score - a.score;
-  const dueCmp = dueSortKey(a.task).localeCompare(dueSortKey(b.task));
-  if (dueCmp !== 0) return dueCmp;
-  const prCmp = TASK_TIE_PRIORITY_RANK[a.task.priority] - TASK_TIE_PRIORITY_RANK[b.task.priority];
+// India/IST date helpers — used throughout (Control Centre, requirement
+// readiness, work-session "tracked today" sums, this module).
+function istDateOfTimestamp(ts) {
+  return new Date(ts + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+// Timezone-agnostic whole-day index for a 'YYYY-MM-DD' string — used only
+// to diff two calendar dates (days overdue), never as a real instant.
+function dayIndex(dateStr) {
+  return Math.floor(Date.parse(dateStr + 'T00:00:00Z') / 86400000);
+}
+function myWorkTaskSort(a, b) {
+  const prCmp = TASK_TIE_PRIORITY_RANK[a.priority] - TASK_TIE_PRIORITY_RANK[b.priority];
   if (prCmp !== 0) return prCmp;
-  if (a.task.created_at !== b.task.created_at) return a.task.created_at - b.task.created_at;
-  const aEm = a.task.expected_minutes ?? Infinity, bEm = b.task.expected_minutes ?? Infinity;
-  if (aEm !== bEm) return aEm - bEm;
-  return String(a.task.id).localeCompare(String(b.task.id));
+  return dueSortKey(a).localeCompare(dueSortKey(b));
 }
 
-async function getWaitingSince(db, taskId) {
-  const { results } = await db.prepare(
-    "SELECT ts FROM task_activity WHERE task_id = ? AND text LIKE 'Task moved to Waiting%' ORDER BY ts DESC LIMIT 1"
-  ).bind(taskId).all();
-  return results.length > 0 ? results[0].ts : null;
-}
-
-// Read-only. Computes the whole My Work payload for one authenticated
-// staff member — never writes to tasks/jobs/task_work_sessions.
-async function computeMyWork(db, user, availableMinutes) {
+async function computeMyWorkSimple(db, user) {
   const allTasks = await listTasks(db);
-  const tasksById = {};
-  for (const t of allTasks) tasksById[t.id] = t;
   const myTasks = allTasks.filter(t => (t.assignee_ids || []).includes(user.id));
-
   const activeSession = await getActiveSessionForStaff(db, user.id);
   const currentTaskId = activeSession ? activeSession.task_id : null;
 
-  const jobIds = [...new Set(myTasks.filter(t => t.job_id).map(t => t.job_id))];
-  const jobsById = {};
-  if (jobIds.length > 0) {
-    const placeholders = jobIds.map(() => '?').join(',');
-    const { results } = await db.prepare(`SELECT id, stage, title, insured FROM jobs WHERE id IN (${placeholders})`).bind(...jobIds).all();
-    for (const j of results) jobsById[j.id] = j;
-  }
-
-  const pinRow = await db.prepare('SELECT next_task_id FROM task_personal_preferences WHERE staff_id = ?').bind(user.id).first();
-  const pinnedTaskId = pinRow ? pinRow.next_task_id : null;
-
-  const live = await listLiveWork(db);
-  const otherStaffIds = [...new Set(live.filter(s => s.staff_id !== user.id).map(s => s.staff_id))];
-  const otherStaffNames = await staffNames(db, otherStaffIds);
-  const nameById = {};
-  otherStaffIds.forEach((id, i) => nameById[id] = otherStaffNames[i]);
-  const othersWorkingByTask = {};
-  for (const s of live) {
-    if (s.staff_id === user.id) continue;
-    (othersWorkingByTask[s.task_id] ||= []).push(nameById[s.staff_id] || s.staff_id);
-  }
-
-  const waiting = [];
-  const blocked = [];
-  const actionable = [];
-  const closedClaimExceptional = [];
-
-  for (const t of myTasks) {
-    if (t.status === 'completed' || t.status === 'cancelled') continue;
-    if (t.id === currentTaskId) continue; // owned by NOW, never duplicated below
-
-    if (t.status === 'waiting') { waiting.push(t); continue; }
-    if (t.is_blocked) { blocked.push(t); continue; }
-
-    const job = t.job_id ? jobsById[t.job_id] : null;
-    if (job && job.stage === 'closed' && !POST_CLOSURE_TASK_TYPES.includes(t.task_type)) {
-      closedClaimExceptional.push(t);
-      continue;
-    }
-
-    actionable.push(t);
-  }
-
   const nowMs = Date.now();
   const todayStr = todayIST();
-  const nowTimeHHMM = nowISTTimeHHMM();
-  const ctx = { nowMs, todayStr, nowTimeHHMM, availableMinutes, pinnedTaskId, othersWorkingByTask };
-
-  const scored = actionable.map(t => ({ task: t, ...scoreTaskForUser(t, ctx) }));
-  scored.sort(compareScored);
-
-  let recommendedNow = null;
-  if (!currentTaskId && scored.length > 0) {
-    recommendedNow = scored[0];
-    if (availableMinutes != null && recommendedNow.fitsAvailableTime === false) {
-      const fitting = scored.find(s => s.fitsAvailableTime === true);
-      if (fitting) {
-        recommendedNow = fitting;
-      } else {
-        recommendedNow = { ...recommendedNow, reasons: [...recommendedNow.reasons, { code: 'needs_more_time' }] };
-      }
-    }
-  }
-
-  const rest = recommendedNow ? scored.filter(s => s.task.id !== recommendedNow.task.id) : scored;
-  const nextItems = rest.slice(0, 5);
-  const laterItems = rest.slice(5);
 
   let current = null;
   if (currentTaskId) {
-    const currentTask = tasksById[currentTaskId] || myTasks.find(t => t.id === currentTaskId);
+    const currentTask = myTasks.find(t => t.id === currentTaskId) || allTasks.find(t => t.id === currentTaskId);
     const sessions = await listTaskWorkSessions(db, currentTaskId);
     const totalActualSeconds = sessions.reduce((sum, s) =>
       sum + (s.ended_at ? (s.duration_seconds || 0) : (nowMs - s.started_at) / 1000), 0);
     current = { task: currentTask, session: activeSession, total_actual_seconds: totalActualSeconds };
   }
 
-  const waitingWithMeta = [];
-  for (const t of waiting) {
-    waitingWithMeta.push({ task: t, waiting_since: await getWaitingSince(db, t.id) });
+  const overdue = [], dueToday = [], upcoming = [], noDueDate = [], waiting = [], completed = [];
+  for (const t of myTasks) {
+    if (t.id === currentTaskId) continue; // owned by "Currently Working On", never duplicated below
+    if (t.status === 'completed' || t.status === 'cancelled') { completed.push(t); continue; }
+    if (t.status === 'waiting') { waiting.push(t); continue; }
+    if (t.is_overdue) { overdue.push(t); continue; }
+    if (t.due_date === todayStr) { dueToday.push(t); continue; }
+    if (t.due_date && t.due_date > todayStr) { upcoming.push(t); continue; }
+    noDueDate.push(t);
   }
-  const blockedWithMeta = blocked.map(t => ({
-    task: t, blocker: t.blocked_by_task_id ? (tasksById[t.blocked_by_task_id] || null) : null,
-  }));
+  [overdue, dueToday, upcoming, noDueDate, waiting].forEach(list => list.sort(myWorkTaskSort));
+  completed.sort((a, b) => (b.completed_at || b.cancelled_at || 0) - (a.completed_at || a.cancelled_at || 0));
 
   const openCount = myTasks.filter(t => t.status !== 'completed' && t.status !== 'cancelled').length;
-  const todayCount = myTasks.filter(t => t.due_date === todayStr && t.status !== 'completed' && t.status !== 'cancelled').length;
-  const overdueCount = myTasks.filter(t => t.is_overdue).length;
 
   const { results: mySessions } = await db.prepare(
     'SELECT started_at, ended_at, duration_seconds FROM task_work_sessions WHERE staff_id = ? ORDER BY started_at DESC LIMIT 500'
@@ -2008,41 +1955,39 @@ async function computeMyWork(db, user, availableMinutes) {
 
   return {
     current,
-    recommended_now: current ? null : recommendedNow,
-    next: nextItems,
-    later: laterItems,
-    waiting: waitingWithMeta,
-    blocked: blockedWithMeta,
-    closed_claim_exceptional: closedClaimExceptional,
-    pinned_task_id: pinnedTaskId,
-    available_minutes: availableMinutes,
-    summary: {
-      open: openCount, due_today: todayCount, overdue: overdueCount,
-      waiting: waiting.length, tracked_today_seconds: trackedTodaySeconds,
-    },
+    overdue, due_today: dueToday, upcoming, no_due_date: noDueDate, waiting, completed,
+    summary: { open: openCount, overdue: overdue.length, due_today: dueToday.length, waiting: waiting.length, tracked_today_seconds: trackedTodaySeconds },
   };
 }
 
-// Exactly one pinned "Do Next" task per staff member — the PRIMARY KEY on
-// staff_id enforces this at the schema level, same pattern as the
-// one-active-session partial index in V1.3. Setting a new pin replaces the
-// old one (ON CONFLICT DO UPDATE); passing a null task_id clears it.
-async function setDoNextPin(db, user, taskId) {
-  if (taskId) {
-    const task = await db.prepare('SELECT 1 FROM tasks WHERE id = ?').bind(taskId).first();
-    if (!task) throw new Error('task not found');
-    const assigned = await db.prepare('SELECT 1 FROM task_assignees WHERE task_id = ? AND staff_id = ?').bind(taskId, user.id).first();
-    if (!assigned) throw new Error('You can only pin a task you are assigned to');
-    const now = Date.now();
-    await db.prepare(`
-      INSERT INTO task_personal_preferences (staff_id, next_task_id, updated_at) VALUES (?,?,?)
-      ON CONFLICT(staff_id) DO UPDATE SET next_task_id = excluded.next_task_id, updated_at = excluded.updated_at
-    `).bind(user.id, taskId, now).run();
-  } else {
-    await db.prepare('DELETE FROM task_personal_preferences WHERE staff_id = ?').bind(user.id).run();
+// "Workflow Actions" — derived, read-only next-actions for claims this
+// staff member is responsible for (director/surveyor/backstaff), reusing
+// buildWorkflowContexts()/analyzeJobWorkflow() exactly as Dashboard/
+// Control Centre/Job Detail already do. Never creates a task row just to
+// represent this (spec Part J) — purely advisory.
+async function computeMyWorkflowActions(db, user) {
+  const contexts = await buildWorkflowContexts(db, null);
+  const HEALTH_RANK = { stalled: 0, attention: 1, watch: 2, on_track: 3, closed: 4 };
+  const rows = [];
+  for (const jobId of Object.keys(contexts)) {
+    const ctx = contexts[jobId];
+    if (ctx.job.stage === 'closed') continue;
+    const responsible = (ctx.job.director_ids || []).includes(user.id)
+      || (ctx.job.surveyor_ids || []).includes(user.id)
+      || (ctx.job.backstaff_ids || []).includes(user.id);
+    if (!responsible) continue;
+    const analysis = analyzeJobWorkflow(ctx.job, ctx);
+    if (!analysis.next_action) continue;
+    rows.push({
+      job_id: jobId, title: ctx.job.title, insured: ctx.job.insured,
+      current_step_label: analysis.current_step_label, next_action: analysis.next_action,
+      reason: analysis.reason, health: analysis.workflow_health,
+    });
   }
-  return { ok: true, pinned_task_id: taskId };
+  rows.sort((a, b) => (HEALTH_RANK[a.health] ?? 5) - (HEALTH_RANK[b.health] ?? 5));
+  return rows;
 }
+
 
 // ── WORKFLOW INTELLIGENCE (V1.5) ────────────────────────────────────
 // Rule-based, deterministic, server-side, read-only. No AI/LLM calls. This
@@ -2316,6 +2261,10 @@ function findWorkflowAlerts(job, ctx, walk, currentStepId) {
   const openQueries = ctx.queries.filter(q => q.status === 'open');
   if (openQueries.length > 0) alerts.push({ code: 'query_open', count: openQueries.length });
 
+  // V1.8: assessment revision terminal states always need Director eyes.
+  if (currentStepId === 'assessment_revision_limit_reached') alerts.push({ code: 'assessment_revision_limit_reached' });
+  else if (currentStepId === 'assessment_rejected') alerts.push({ code: 'assessment_rejected' });
+
   if (ctx.billing) {
     if (ctx.billing.paymentStatus === 'bill_pending' && job.fsr_submitted === 'yes') alerts.push({ code: 'bill_pending' });
     if (['unpaid', 'part_payment'].includes(ctx.billing.paymentStatus)) alerts.push({ code: 'payment_pending' });
@@ -2335,7 +2284,7 @@ function deriveWorkflowHealth(job, daysSinceActivity, attentionFlags) {
     : daysSinceActivity >= STALL_THRESHOLDS_DAYS.attention ? 'attention'
     : daysSinceActivity >= STALL_THRESHOLDS_DAYS.watch ? 'watch'
     : 'on_track';
-  const hasBlockingAttention = attentionFlags.some(a => ['overdue_task', 'query_open', 'decide_required'].includes(a.code));
+  const hasBlockingAttention = attentionFlags.some(a => ['overdue_task', 'query_open', 'decide_required', 'assessment_revision_limit_reached', 'assessment_rejected'].includes(a.code));
   if (hasBlockingAttention && HEALTH_RANK.attention > HEALTH_RANK[health]) health = 'attention';
   return health;
 }
@@ -2345,6 +2294,29 @@ function deriveWorkflowHealth(job, daysSinceActivity, attentionFlags) {
 // rows plus `nowMs` and the freshly-computed `billing` (computeBilling
 // output) — reused, never re-derived, for the billing/closure phase so
 // there is exactly one closure-eligibility policy in the whole app.
+// V1.8: when a job has active assessment_revisions rows, the LATEST
+// revision's own director_status/insurer_status/assessed_amount become
+// what the 'assessment'/'director_verification'/'insurer_approval' steps
+// actually evaluate — mapped onto the exact same jobs.* vocabulary
+// deriveWorkflowSteps() already understands (including reusing the
+// existing 'returned_for_revision' value, so the pre-existing rework-
+// override below needs no duplicate logic for the "Director returned"
+// case). The ORIGINAL jobs.* fields themselves are never written to or
+// overwritten by this — this is a read-only projection for analysis only.
+function buildEffectiveAssessmentJob(job, ctx) {
+  if (!ctx.allRevisions || ctx.allRevisions.length === 0) return job;
+  const latest = ctx.allRevisions[ctx.allRevisions.length - 1];
+  return {
+    ...job,
+    assessment_status: latest.assessed_amount ? 'prepared' : 'in_preparation',
+    assessed_amount: latest.assessed_amount || job.assessed_amount,
+    director_verification_status: latest.director_status === 'returned' ? 'returned_for_revision' : latest.director_status,
+    director_verification_remarks: latest.director_status === 'returned' ? latest.director_return_reason : job.director_verification_remarks,
+    insurer_approval_status: latest.insurer_status === 'revision_required' ? 'query'
+      : latest.insurer_status === 'rejected' ? 'rejected' : latest.insurer_status,
+  };
+}
+
 function analyzeJobWorkflow(job, ctx) {
   if (job.stage === 'closed') {
     return {
@@ -2355,7 +2327,8 @@ function analyzeJobWorkflow(job, ctx) {
     };
   }
 
-  const walk = deriveWorkflowSteps(job);
+  const effectiveJob = buildEffectiveAssessmentJob(job, ctx);
+  const walk = deriveWorkflowSteps(effectiveJob);
   let phase, currentStepId, currentStepLabel, nextAction, reason;
 
   if (walk.currentStep) {
@@ -2363,15 +2336,23 @@ function analyzeJobWorkflow(job, ctx) {
     currentStepId = walk.currentStep.id;
     currentStepLabel = walk.currentStep.label;
     nextAction = { code: walk.currentStep.id, label: walk.currentStep.nextAction, task_type: walk.currentStep.taskType };
-    reason = buildStepReason(job, walk.currentStep, ctx);
+    reason = buildStepReason(effectiveJob, walk.currentStep, ctx);
 
-    if (currentStepId === 'director_verification' && job.director_verification_status === 'returned_for_revision') {
+    // These four overrides are independent concerns (Director-return
+    // rework, FSR-return rework, V1.7 document readiness, V1.8 revision
+    // labeling/terminal-states) and are NOT mutually exclusive — e.g. a
+    // revision's "Director returned" state needs BOTH the existing rework
+    // override AND the "— R{n}" label suffix, so each is checked on its
+    // own rather than chained as else-if.
+    if (currentStepId === 'director_verification' && effectiveJob.director_verification_status === 'returned_for_revision') {
       nextAction = { code: 'rework_assessment', label: 'Rework assessment', task_type: 'assessment_preparation' };
-      reason = job.director_verification_remarks ? `Returned by Director: ${job.director_verification_remarks}` : 'Assessment returned for revision by Director.';
-    } else if (currentStepId === 'fsr_final_verification' && job.fsr_final_verification_status === 'returned_for_revision') {
+      reason = effectiveJob.director_verification_remarks ? `Returned by Director: ${effectiveJob.director_verification_remarks}` : 'Assessment returned for revision by Director.';
+    }
+    if (currentStepId === 'fsr_final_verification' && job.fsr_final_verification_status === 'returned_for_revision') {
       nextAction = { code: 'rework_fsr', label: 'Rework FSR', task_type: 'fsr_preparation' };
       reason = job.fsr_final_verification_remarks ? `Returned by Director: ${job.fsr_final_verification_remarks}` : 'FSR returned for revision by Director.';
-    } else if (currentStepId === 'documents' && ctx.requirements && ctx.requirements.length > 0) {
+    }
+    if (currentStepId === 'documents' && ctx.requirements && ctx.requirements.length > 0) {
       // V1.7: once a requirement checklist exists, the generic "follow up
       // documents" next action becomes requirement-aware — never changes
       // what makes the 'documents' step itself complete (still
@@ -2382,6 +2363,27 @@ function analyzeJobWorkflow(job, ctx) {
         nextAction = { code: 'verify_documents', label: 'Verify documents', task_type: 'verify_documents' };
       } else if (dr.reminder_due) {
         nextAction = { code: 'follow_up_requirements', label: 'Follow up pending requirements', task_type: 'call_pending_documents' };
+      }
+    }
+    if (ctx.allRevisions && ctx.allRevisions.length > 0 && ['assessment', 'director_verification', 'insurer_approval'].includes(currentStepId)) {
+      // V1.8: an active revision cycle exists — suffix the label with
+      // "— R{n}" regardless of which sub-case (pending/returned) is
+      // active above; the two genuinely new terminal states additionally
+      // override current_step/next_action/reason outright.
+      const latest = ctx.allRevisions[ctx.allRevisions.length - 1];
+      currentStepLabel = `${currentStepLabel} — R${latest.revision_no}`;
+      if (currentStepId === 'insurer_approval') {
+        if (latest.insurer_status === 'revision_required' && latest.revision_no >= ASSESSMENT_REVISION_MAX) {
+          currentStepId = 'assessment_revision_limit_reached';
+          currentStepLabel = 'Assessment Revision Limit Reached';
+          nextAction = { code: 'assessment_revision_limit_reached', label: 'Director intervention required' };
+          reason = `Revision ${latest.revision_no} has been returned by the insurer. Maximum of ${ASSESSMENT_REVISION_MAX} revisions reached — Director intervention required.`;
+        } else if (latest.insurer_status === 'rejected') {
+          currentStepId = 'assessment_rejected';
+          currentStepLabel = 'Assessment Rejected by Insurer';
+          nextAction = { code: 'assessment_rejected', label: 'Director/Admin review required' };
+          reason = `Insurer rejected Revision ${latest.revision_no}.`;
+        }
       }
     }
   } else {
@@ -2445,6 +2447,7 @@ async function buildWorkflowContexts(db, jobIds) {
   const { results: workSessionRows } = await db.prepare('SELECT task_id, started_at, ended_at FROM task_work_sessions').all();
   const { results: jobRequirementRows } = await db.prepare('SELECT * FROM job_requirements').all();
   const { results: followupRows } = await db.prepare('SELECT * FROM requirement_followups').all();
+  const { results: revisionRows } = await db.prepare('SELECT * FROM assessment_revisions ORDER BY revision_no ASC').all();
 
   const billingByJob = {}; for (const b of billingRows) billingByJob[b.job_id] = b;
   const feeSumsByJob = {};
@@ -2472,6 +2475,7 @@ async function buildWorkflowContexts(db, jobIds) {
   const sessionsByTask = groupBy(workSessionRows, 'task_id');
   const requirementsByJob = groupBy(jobRequirementRows.map(r => ({ ...r, mandatory: !!r.mandatory })), 'job_id');
   const followupsByRequirement = groupBy(followupRows, 'job_requirement_id');
+  const revisionsByJob = groupBy(revisionRows, 'job_id');
 
   const nowMs = Date.now();
   const contexts = {};
@@ -2496,6 +2500,7 @@ async function buildWorkflowContexts(db, jobIds) {
       taskActivity, workSessions,
       requirements, followupsByReq,
       documentReadiness: computeDocumentReadiness(requirements, followupsByReq, job, nowMs),
+      allRevisions: revisionsByJob[row.id] || [],
       job,
     };
   }
@@ -2659,6 +2664,13 @@ function buildApprovalQueues(openRows) {
   const insuredConsentPending = openRows
     .filter(r => r.analysis.current_step === 'insured_consent')
     .map(ccJobRow);
+  // V1.8: assessment revision cycles needing Director attention.
+  const assessmentRevisionLimitReached = openRows
+    .filter(r => r.analysis.current_step === 'assessment_revision_limit_reached')
+    .map(ccJobRow);
+  const assessmentRejected = openRows
+    .filter(r => r.analysis.current_step === 'assessment_rejected')
+    .map(ccJobRow);
   return {
     director_assessment_pending: directorAssessmentPending,
     assessment_returned: assessmentReturned,
@@ -2667,6 +2679,8 @@ function buildApprovalQueues(openRows) {
     insurer_approval_pending: insurerApprovalPending,
     insured_consent_pending: insuredConsentPending,
     decision_required: decisionRequired,
+    assessment_revision_limit_reached: assessmentRevisionLimitReached,
+    assessment_rejected: assessmentRejected,
   };
 }
 
@@ -3983,6 +3997,46 @@ export default {
         }
       }
 
+      // ── ASSESSMENT REVISIONS (V1.8) ───────────────────────────────
+      {
+        const revCollectionMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/assessment-revisions\/?$/);
+        if (revCollectionMatch) {
+          const jobId = decodeURIComponent(revCollectionMatch[1]);
+          if (request.method === 'GET') return json(await listAssessmentRevisions(db, jobId));
+          if (request.method === 'POST') {
+            const body = await request.json();
+            return json(await requestAssessmentRevision(db, jobId, body, user), 201);
+          }
+        }
+      }
+      {
+        const revPrepMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/assessment-revisions\/([^/]+)\/preparation\/?$/);
+        if (revPrepMatch && request.method === 'PUT') {
+          const jobId = decodeURIComponent(revPrepMatch[1]);
+          const revId = decodeURIComponent(revPrepMatch[2]);
+          const body = await request.json();
+          return json(await updateAssessmentRevisionPreparation(db, jobId, revId, body, user));
+        }
+      }
+      {
+        const revDirMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/assessment-revisions\/([^/]+)\/director\/?$/);
+        if (revDirMatch && request.method === 'PUT') {
+          const jobId = decodeURIComponent(revDirMatch[1]);
+          const revId = decodeURIComponent(revDirMatch[2]);
+          const body = await request.json();
+          return json(await updateAssessmentRevisionDirector(db, jobId, revId, body, user));
+        }
+      }
+      {
+        const revInsMatch = pathname.match(/^\/api\/jobs\/([^/]+)\/assessment-revisions\/([^/]+)\/insurer\/?$/);
+        if (revInsMatch && request.method === 'PUT') {
+          const jobId = decodeURIComponent(revInsMatch[1]);
+          const revId = decodeURIComponent(revInsMatch[2]);
+          const body = await request.json();
+          return json(await updateAssessmentRevisionInsurer(db, jobId, revId, body, user));
+        }
+      }
+
       if (pathname.startsWith('/api/jobs/') && request.method === 'PATCH') {
         const id = decodeURIComponent(pathname.slice('/api/jobs/'.length));
         const body = await request.json();
@@ -4040,20 +4094,17 @@ export default {
         return json(await correctWorkSession(db, id, body, user));
       }
 
+      // V1.8: simplified — no scoring, no ranking, no available-minutes
+      // matching, no pin. One combined read-only payload: the plain task
+      // grouping plus derived Workflow Actions for claims this user is
+      // responsible for. Fetched once when the view opens / on manual
+      // refresh — never polled.
       if (pathname === '/api/my-work' && request.method === 'GET') {
-        const availRaw = url.searchParams.get('available_minutes');
-        let availableMinutes = null;
-        if (availRaw !== null && availRaw !== '') {
-          const n = Number(availRaw);
-          if (!Number.isInteger(n) || n <= 0) throw new Error('available_minutes must be a positive integer');
-          availableMinutes = n;
-        }
-        return json(await computeMyWork(db, user, availableMinutes));
-      }
-
-      if (pathname === '/api/my-work/pin' && request.method === 'PUT') {
-        const body = await request.json();
-        return json(await setDoNextPin(db, user, body.task_id || null));
+        const [tasks, workflowActions] = await Promise.all([
+          computeMyWorkSimple(db, user),
+          computeMyWorkflowActions(db, user),
+        ]);
+        return json({ ...tasks, workflow_actions: workflowActions });
       }
 
       if (pathname === '/api/workflow/attention' && request.method === 'GET') {
